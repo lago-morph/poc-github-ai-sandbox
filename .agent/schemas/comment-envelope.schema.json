@@ -13,7 +13,7 @@
     "branch": { "type": "string", "minLength": 1 },
     "commit_sha": {
       "type": "string",
-      "pattern": "^[0-9a-f]{7,64}$"
+      "pattern": "^[0-9a-f]{40}$"
     },
     "subagent_id": { "type": "string", "minLength": 1 },
     "submitted_at": { "type": "string", "format": "date-time" },
@@ -27,7 +27,7 @@
     "workflow_run_id": { "type": ["integer", "null"] },
     "checked_out_sha": {
       "type": ["string", "null"],
-      "pattern": "^[0-9a-f]{7,64}$"
+      "pattern": "^[0-9a-f]{40}$"
     },
     "summary": { "type": ["object", "null"] },
     "log_manifest_branch": { "type": ["string", "null"] },

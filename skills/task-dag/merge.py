@@ -41,16 +41,22 @@ def merge_subagent_branches(
     *,
     feature_branch: str,
     subagent_branches: list[str],
-    delete_branches: bool = False,
+    delete_branches: bool = True,
 ) -> dict[str, Any]:
     """Apply each subagent branch's tip files onto the feature branch.
 
     For the in-memory POC client this is implemented as a full overlay
     via :meth:`InMemoryGitHubClient.commit_files`; with a real client
     you'd open per-branch merge commits via the GitHub API.
+
+    When ``delete_branches`` is True (default), each successfully-merged
+    subagent branch is deleted via :meth:`GitHubClient.delete_branch`
+    after the merge commit lands. Branches that were skipped (missing
+    or empty) are not deleted.
     """
     merged: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    deleted: list[str] = []
 
     for sub in subagent_branches:
         sub_sha = client.get_branch_head_sha(sub)
@@ -69,24 +75,34 @@ def merge_subagent_branches(
                 "merged_at": iso_now(),
                 "method": "abstract",
             })
-            continue
+        else:
+            # Pull the file map directly from the in-memory commit graph.
+            files = _files_at(client, sub)
+            new_sha = commit_files(
+                feature_branch,
+                files,
+                f"Merge subagent branch {sub} into {feature_branch}",
+            )
+            merged.append({
+                "branch": sub,
+                "sub_sha": sub_sha,
+                "merge_sha": new_sha,
+                "merged_at": iso_now(),
+                "method": "in_memory_overlay",
+            })
 
-        # Pull the file map directly from the in-memory commit graph.
-        files = _files_at(client, sub)
-        new_sha = commit_files(
-            feature_branch,
-            files,
-            f"Merge subagent branch {sub} into {feature_branch}",
-        )
-        merged.append({
-            "branch": sub,
-            "sub_sha": sub_sha,
-            "merge_sha": new_sha,
-            "merged_at": iso_now(),
-            "method": "in_memory_overlay",
-        })
+        # After a successful merge, optionally delete the subagent branch.
+        if delete_branches:
+            try:
+                client.delete_branch(sub)
+                deleted.append(sub)
+            except Exception:  # noqa: BLE001 - best-effort cleanup
+                # Branch deletion is best-effort; failures don't roll back
+                # an already-recorded merge. Real clients may surface 422
+                # ("not found") which we treat as already-deleted.
+                pass
 
-    return {"merged": merged, "skipped": skipped}
+    return {"merged": merged, "skipped": skipped, "deleted": deleted}
 
 
 def _files_at(client: GitHubClient, branch: str) -> dict[str, bytes]:

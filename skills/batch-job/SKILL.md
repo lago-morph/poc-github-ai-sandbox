@@ -20,7 +20,10 @@ Submit a single batch job from an active issue and consume the result.
 3. `poll.poll(...)` loops until `run_status` is terminal
    (`completed` / `error` / `parse_error`), respecting
    `runner_pickup_timeout_seconds` and `running_timeout_seconds` from
-   `.agent/config.json`.
+   `.agent/config.json`. Pass an optional `heartbeat` callable to be
+   invoked once per poll iteration (after the comment is read) so the
+   caller can refresh `status_ts` on the parent issue while waiting —
+   per SPEC §9.4 step 3.
 4. The summary is validated against the per-command summary schema.
 5. The skill writes `agent_ack: finished` into the comment.
 

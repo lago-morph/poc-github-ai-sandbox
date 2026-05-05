@@ -66,11 +66,17 @@ def poll(
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
     ack: bool = True,
+    heartbeat: Optional[Callable[[], None]] = None,
 ) -> dict[str, Any]:
     """Poll the comment until terminal. Returns ``{envelope, summary, summary_json}``.
 
     Raises :class:`PollTimeout` if the runner-pickup or running deadline
     elapses without progress.
+
+    If ``heartbeat`` is provided, it is invoked once per poll iteration
+    AFTER the comment has been read (per SPEC §9.4 step 3) — typical
+    callers use this to refresh ``status_ts`` on the parent issue while
+    waiting for the runner.
     """
     cfg = config or load_config(repo_root() / ".agent" / "config.json")
     pickup_deadline = float(cfg["comment"].get("runner_pickup_timeout_seconds", 300))
@@ -88,6 +94,11 @@ def poll(
             envelope = json.loads(body)
         except json.JSONDecodeError as e:
             raise RuntimeError(f"comment body is not JSON: {e}") from e
+
+        # SPEC §9.4 step 3: heartbeat each cycle after reading the comment,
+        # before deciding whether to break or sleep again.
+        if heartbeat is not None:
+            heartbeat()
 
         run_status = envelope.get("run_status")
         if is_terminal_run_status(run_status):

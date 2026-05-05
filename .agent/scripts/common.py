@@ -154,6 +154,7 @@ class GitHubClient(Protocol):
         branch: str,
     ) -> dict[str, Any]: ...
     def get_branch_head_sha(self, branch: str) -> Optional[str]: ...
+    def delete_branch(self, name: str) -> None: ...
 
     # PR operations --------------------------------------------------------
     def create_pull_request(
@@ -487,6 +488,15 @@ class InMemoryGitHubClient:
             if br is None:
                 return None
             return br.head_sha
+
+    def delete_branch(self, name: str) -> None:
+        """Delete a branch ref. Idempotent: missing branches are ignored.
+
+        Note: commits are not garbage-collected from the in-memory store —
+        only the branch ref is removed (mirrors GitHub's ref-delete semantics).
+        """
+        with self._lock:
+            self._branches.pop(name, None)
 
     def commit_files(
         self,

@@ -86,6 +86,22 @@ def run(
 
     started_at = iso_now()
 
+    # SPEC §13: reject envelopes with unknown protocol_version BEFORE schema
+    # validation. We already know parsed has both protocol_version and kind
+    # markers (has_protocol_markers above).
+    if parsed.get("protocol_version") != 1:
+        return _write_parse_error(
+            client,
+            comment_id,
+            original_body=raw_body,
+            error_kind="unsupported_version",
+            error_detail=(
+                f"protocol_version {parsed.get('protocol_version')!r} is not supported"
+            ),
+            workflow_run_id=workflow_run_id,
+            started_at=started_at,
+        )
+
     # Validate base envelope shape.
     try:
         validate(parsed, envelope_schema)
@@ -102,14 +118,20 @@ def run(
 
     command = parsed.get("command")
     if not command or command not in cfg.get("commands", []):
-        return _write_parse_error(
-            client,
-            comment_id,
-            original_body=raw_body,
+        # SPEC §5.2.4 reserves parse_error for envelope-schema failures only.
+        # An unknown command is a valid envelope referring to an unregistered
+        # command — this is a terminal `error` with error_kind=unknown_command.
+        return _write_terminal_error(
+            client=client,
+            issue_number=issue_number,
+            comment_id=comment_id,
+            envelope=parsed,
             error_kind="unknown_command",
             error_detail=f"command not in registry: {command!r}",
             workflow_run_id=workflow_run_id,
-            started_at=started_at,
+            run_started_at=started_at,
+            cfg=cfg,
+            repo_root=repo_root,
         )
 
     # Validate args via per-command schema.
@@ -117,14 +139,18 @@ def run(
     try:
         cmd_schema = load_schema(cmd_schema_path, repo_root)
     except FileNotFoundError:
-        return _write_parse_error(
-            client,
-            comment_id,
-            original_body=raw_body,
+        # No schema file = command not actually implemented; same as unknown.
+        return _write_terminal_error(
+            client=client,
+            issue_number=issue_number,
+            comment_id=comment_id,
+            envelope=parsed,
             error_kind="unknown_command",
             error_detail=f"no schema file for command {command}",
             workflow_run_id=workflow_run_id,
-            started_at=started_at,
+            run_started_at=started_at,
+            cfg=cfg,
+            repo_root=repo_root,
         )
 
     args_schema = cmd_schema.get("properties", {}).get("args")
@@ -419,16 +445,37 @@ def _write_terminal_error(
 
 
 def main() -> int:
-    issue = os.environ.get("ISSUE_NUMBER")
-    cid = os.environ.get("COMMENT_ID")
-    if not issue or not cid:
-        print("ISSUE_NUMBER and COMMENT_ID are required", file=sys.stderr)
-        return 2
+    """POC stub for the ``batch-job-handler`` workflow entry point.
+
+    Required environment variables (consumed by ``run()`` once a real
+    REST-backed ``GitHubClient`` is wired in):
+      - ``ISSUE_NUMBER``   the issue carrying the request comment
+      - ``COMMENT_ID``     the comment id holding the envelope
+      - ``GITHUB_TOKEN``   token authenticating REST calls
+      - ``GITHUB_REPOSITORY``  ``owner/repo`` slug
+    Optional:
+      - ``WORKFLOW_RUN_ID``  echoed into the running envelope (default 0)
+      - ``GITHUB_WORKSPACE`` checkout root passed to command handlers
+
+    Exits 0 (POC stub successfully reached). When an actual REST client
+    lands, this function will instantiate it and call ``run()``.
+    """
+    required = ["ISSUE_NUMBER", "COMMENT_ID", "GITHUB_TOKEN", "GITHUB_REPOSITORY"]
+    missing = [k for k in required if not os.environ.get(k)]
     print(
-        "handler: live REST client not implemented in POC; would handle "
-        f"issue #{issue} comment {cid}",
+        "handler: POC stub. Required env vars: "
+        + ", ".join(required)
+        + ". Optional: WORKFLOW_RUN_ID, GITHUB_WORKSPACE.",
         file=sys.stderr,
     )
+    if missing:
+        print(f"handler: missing env vars (POC stub, exit 0 anyway): {missing}", file=sys.stderr)
+    else:
+        print(
+            "handler: would dispatch issue "
+            f"#{os.environ['ISSUE_NUMBER']} comment {os.environ['COMMENT_ID']}",
+            file=sys.stderr,
+        )
     return 0
 
 
