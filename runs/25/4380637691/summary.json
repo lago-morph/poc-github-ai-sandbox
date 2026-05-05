@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "echoed_args": {
+      "message": "hello from beta"
+    },
+    "message": "hello from beta"
+  },
+  "run_status": "completed",
+  "command": "echo",
+  "args": {
+    "message": "hello from beta"
+  },
+  "checked_out_sha": "25c74411553d34df94fbca5f33e6dc9fb40ed539",
+  "started_at": "2026-05-05T15:19:17Z",
+  "finished_at": "2026-05-05T15:19:18Z"
+}
