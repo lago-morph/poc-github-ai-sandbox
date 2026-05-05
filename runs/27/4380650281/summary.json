@@ -1,0 +1,12 @@
+{
+  "summary": {
+    "error_kind": "summary_schema_violation",
+    "error_detail": "schema validation failed at <root>: 'required_field' is a required property"
+  },
+  "run_status": "error",
+  "command": "bad-summary",
+  "args": {},
+  "checked_out_sha": "5e9dcfc0a8b2feb8de73ef049c2a0509dc846617",
+  "started_at": "2026-05-05T15:20:47Z",
+  "finished_at": "2026-05-05T15:20:49Z"
+}
