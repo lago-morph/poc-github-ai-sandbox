@@ -236,3 +236,144 @@ def test_log_writer_write_after_finalize_raises():
     with pytest.raises(RuntimeError):
         lw.write({"ts": common.iso_now(), "stream": "stdout",
                   "phase": "exec", "data": "after-close"})
+
+
+# ---------------------------------------------------------------------------
+# Iter 3: Section D — log sanitisation (sanitize_record + LogWriter)
+# ---------------------------------------------------------------------------
+
+def test_sanitize_record_redacts_gh_token():
+    """A 40-char ghp_ prefixed token is redacted; original is not mutated."""
+    secret = "ghp_" + ("A" * 40)
+    record = {
+        "ts": "2026-01-01T00:00:00Z",
+        "stream": "stdout",
+        "phase": "exec",
+        "data": f"using token {secret} for clone",
+    }
+    out = common.sanitize_record(record)
+    assert "***" in out["data"]
+    assert secret not in out["data"]
+    # Original untouched.
+    assert secret in record["data"]
+
+
+def test_sanitize_record_redacts_aws_key():
+    """An AKIA[16-uppercase-hex/digits] key is redacted."""
+    secret = "AKIA" + ("ABCDEF1234567890")  # 20 chars total
+    record = {"data": f"key={secret} more text"}
+    out = common.sanitize_record(record)
+    assert "***" in out["data"]
+    assert secret not in out["data"]
+
+
+def test_sanitize_record_redacts_bearer_token():
+    """A Bearer token is redacted with the prefix preserved."""
+    record = {"data": "Authorization: Bearer abcdef123456789012345xyz_TOKEN"}
+    out = common.sanitize_record(record)
+    assert "Bearer ***" in out["data"]
+    assert "abcdef123456789012345xyz_TOKEN" not in out["data"]
+
+
+def test_sanitize_record_redacts_api_key_value():
+    """A key=value secret pattern (`api_key: ...`) gets the value masked."""
+    record = {"data": "config api_key=mySuperSecret_VALUE_12345 follows"}
+    out = common.sanitize_record(record)
+    # The key name survives, but the secret value is masked.
+    assert "api_key" in out["data"]
+    assert "***" in out["data"]
+    assert "mySuperSecret_VALUE_12345" not in out["data"]
+
+
+def test_sanitize_record_recurses_dict():
+    """Nested dict values are also sanitised."""
+    secret = "ghp_" + ("Q" * 40)
+    record = {
+        "data": {
+            "nested": {
+                "auth": secret,
+                "ok": "fine",
+            }
+        }
+    }
+    out = common.sanitize_record(record)
+    assert secret not in json.dumps(out)
+    assert out["data"]["nested"]["ok"] == "fine"
+    # Original record not mutated.
+    assert record["data"]["nested"]["auth"] == secret
+
+
+def test_sanitize_record_recurses_list():
+    """Strings inside a list are sanitised."""
+    secret = "ghp_" + ("Z" * 40)
+    record = {"data": ["safe", f"token={secret}", "also-safe"]}
+    out = common.sanitize_record(record)
+    full = json.dumps(out)
+    assert secret not in full
+    assert out["data"][0] == "safe"
+    assert out["data"][2] == "also-safe"
+
+
+def test_sanitize_record_handles_non_strings():
+    """Ints, None, bool, float pass through unchanged."""
+    record = {
+        "ts": 12345,
+        "is_terminal": True,
+        "exit_code": 0,
+        "fraction": 0.25,
+        "missing": None,
+    }
+    out = common.sanitize_record(record)
+    assert out["ts"] == 12345
+    assert out["is_terminal"] is True
+    assert out["exit_code"] == 0
+    assert out["fraction"] == 0.25
+    assert out["missing"] is None
+
+
+def test_log_writer_sanitize_default_on():
+    """Default LogWriter sanitises records: a token written ends up redacted
+    in the gzipped chunk."""
+    secret = "ghp_" + ("Y" * 40)
+    lw = common.LogWriter(max_chunk_bytes_compressed=10_000_000)
+    lw.write({"ts": common.iso_now(), "stream": "stdout",
+              "phase": "exec", "data": f"shipping token {secret} now"})
+    chunks = lw.finalize()
+    assert chunks
+    decompressed = gzip.decompress(chunks[0][1]).decode("utf-8")
+    assert "***" in decompressed
+    assert secret not in decompressed
+
+
+def test_log_writer_sanitize_disabled():
+    """LogWriter(..., sanitize=False) preserves original content verbatim.
+
+    Use only for trusted internal records.
+    """
+    secret = "ghp_" + ("X" * 40)
+    lw = common.LogWriter(max_chunk_bytes_compressed=10_000_000, sanitize=False)
+    lw.write({"ts": common.iso_now(), "stream": "stdout",
+              "phase": "exec", "data": f"trusted: {secret}"})
+    chunks = lw.finalize()
+    decompressed = gzip.decompress(chunks[0][1]).decode("utf-8")
+    assert secret in decompressed
+    assert "***" not in decompressed
+
+
+def test_log_writer_chunk_size_tighter():
+    """Tighter slack: each rotated chunk should not exceed threshold * 2.
+
+    Iter 2 used a *5 slack window; this pins the slack to *2 so future
+    impl tightening is caught.
+    """
+    max_chunk_bytes_compressed = 64
+    lw = common.LogWriter(max_chunk_bytes_compressed=max_chunk_bytes_compressed)
+    big_payload = "x" * 1000
+    for i in range(20):
+        lw.write({"ts": common.iso_now(), "stream": "stdout",
+                  "phase": "exec", "data": big_payload})
+    chunks = lw.finalize()
+    assert len(chunks) >= 2
+    # All but the last are rotated *because* they crossed the threshold.
+    for path, gz_bytes, info in chunks[:-1]:
+        assert info["bytes"] <= max_chunk_bytes_compressed * 2

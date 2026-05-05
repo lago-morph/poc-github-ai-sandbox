@@ -378,3 +378,426 @@ def test_schedule_successors_creates_null_issues_with_depends(client, base_confi
         assert m["session_id"] is None
         assert m["parent_issue"] == 99
         assert m["base_branch"] == "main"
+
+
+# ---------------------------------------------------------------------------
+# Iter 3: Section A — Merge conflict default + strategies
+# ---------------------------------------------------------------------------
+
+def _seed_conflicting_branches(client, base_content=b"base",
+                                a_content=b"alpha-v",
+                                b_content=b"beta-v",
+                                feat="agent/1-x"):
+    client.create_branch("main")
+    client.put_file_contents("shared.txt", base_content, "init", feat)
+    sub_a = f"{feat}/sub-alpha"
+    sub_b = f"{feat}/sub-beta"
+    client.create_branch(sub_a, from_branch=feat)
+    client.commit_files(sub_a, {"shared.txt": a_content}, "alpha")
+    client.create_branch(sub_b, from_branch=feat)
+    client.commit_files(sub_b, {"shared.txt": b_content}, "beta")
+    return feat, sub_a, sub_b
+
+
+def test_merge_default_strategy_raises_on_conflict(client):
+    """Default conflict_strategy='fail' raises MergeConflictError BEFORE
+    any branch is merged; feature branch SHA is unchanged."""
+    feat, sub_a, sub_b = _seed_conflicting_branches(client)
+    pre_sha = client.get_branch_head_sha(feat)
+
+    with pytest.raises(merge_mod.MergeConflictError) as ei:
+        merge_mod.merge_subagent_branches(
+            client, feature_branch=feat,
+            subagent_branches=[sub_a, sub_b],
+        )
+    # Conflict path is reported.
+    assert "shared.txt" in ei.value.conflicts
+
+    # No partial merge: feat SHA unchanged AND subagent branches still exist.
+    assert client.get_branch_head_sha(feat) == pre_sha
+    assert client.get_branch_head_sha(sub_a) is not None
+    assert client.get_branch_head_sha(sub_b) is not None
+
+
+def test_merge_first_writer_wins(client):
+    """First subagent's content survives; second's content for the conflict
+    path is dropped. Non-conflicting paths from second still get applied."""
+    feat, sub_a, sub_b = _seed_conflicting_branches(client)
+    # Add a non-conflicting file on sub_b only.
+    client.commit_files(sub_b, {"only-on-b.txt": b"b-only"}, "b extra")
+
+    res = merge_mod.merge_subagent_branches(
+        client, feature_branch=feat,
+        subagent_branches=[sub_a, sub_b],
+        conflict_strategy="first-writer-wins",
+    )
+    # First (sub_a) wrote alpha-v; sub_b's beta-v was skipped for the conflict.
+    assert client.get_file_bytes("shared.txt", feat) == b"alpha-v"
+    # Non-conflicting file from sub_b made it.
+    assert client.get_file_bytes("only-on-b.txt", feat) == b"b-only"
+    assert "shared.txt" in res["conflicts"]
+    assert len(res["merged"]) == 2
+
+
+def test_merge_last_writer_wins(client):
+    """Last subagent's content overwrites; non-conflicting paths from earlier
+    branches are preserved."""
+    feat, sub_a, sub_b = _seed_conflicting_branches(client)
+    # Add a non-conflicting file on sub_a only.
+    client.commit_files(sub_a, {"only-on-a.txt": b"a-only"}, "a extra")
+
+    res = merge_mod.merge_subagent_branches(
+        client, feature_branch=feat,
+        subagent_branches=[sub_a, sub_b],
+        conflict_strategy="last-writer-wins",
+    )
+    assert client.get_file_bytes("shared.txt", feat) == b"beta-v"
+    assert client.get_file_bytes("only-on-a.txt", feat) == b"a-only"
+    assert "shared.txt" in res["conflicts"]
+    assert len(res["merged"]) == 2
+
+
+def test_merge_no_conflict_when_branches_modify_different_paths(client):
+    """No conflict detected when branches edit disjoint paths."""
+    client.create_branch("main")
+    client.put_file_contents("README", b"base", "init", "agent/1-x")
+    feat = "agent/1-x"
+    sub_a = f"{feat}/sub-alpha"
+    sub_b = f"{feat}/sub-beta"
+    client.create_branch(sub_a, from_branch=feat)
+    client.commit_files(sub_a, {"a.txt": b"a-content"}, "alpha")
+    client.create_branch(sub_b, from_branch=feat)
+    client.commit_files(sub_b, {"b.txt": b"b-content"}, "beta")
+    res = merge_mod.merge_subagent_branches(
+        client, feature_branch=feat,
+        subagent_branches=[sub_a, sub_b],
+    )
+    assert res["conflicts"] == []
+    assert client.get_file_bytes("a.txt", feat) == b"a-content"
+    assert client.get_file_bytes("b.txt", feat) == b"b-content"
+
+
+def test_merge_conflict_with_three_branches(client):
+    """Three branches all modify the same path. Default fail raises;
+    last-writer-wins keeps the last branch's content."""
+    feat, sub_a, sub_b = _seed_conflicting_branches(client)
+    sub_c = f"{feat}/sub-gamma"
+    client.create_branch(sub_c, from_branch=feat)
+    client.commit_files(sub_c, {"shared.txt": b"gamma-v"}, "gamma")
+
+    with pytest.raises(merge_mod.MergeConflictError):
+        merge_mod.merge_subagent_branches(
+            client, feature_branch=feat,
+            subagent_branches=[sub_a, sub_b, sub_c],
+        )
+
+    res = merge_mod.merge_subagent_branches(
+        client, feature_branch=feat,
+        subagent_branches=[sub_a, sub_b, sub_c],
+        conflict_strategy="last-writer-wins",
+    )
+    assert client.get_file_bytes("shared.txt", feat) == b"gamma-v"
+    assert "shared.txt" in res["conflicts"]
+    assert len(res["merged"]) == 3
+
+
+def test_merge_delete_branch_failure_recorded(client, monkeypatch):
+    """When delete_branch raises on one branch, it's recorded in
+    delete_failed; other branches still merged & deleted."""
+    client.create_branch("main")
+    client.put_file_contents("README", b"base", "init", "agent/1-x")
+    feat = "agent/1-x"
+    sub_a = f"{feat}/sub-alpha"
+    sub_b = f"{feat}/sub-beta"
+    client.create_branch(sub_a, from_branch=feat)
+    client.commit_files(sub_a, {"a.txt": b"a-content"}, "alpha")
+    client.create_branch(sub_b, from_branch=feat)
+    client.commit_files(sub_b, {"b.txt": b"b-content"}, "beta")
+
+    real_delete = client.delete_branch
+
+    def faulty_delete(name: str):
+        if name == sub_a:
+            raise RuntimeError("simulated ref-protection")
+        return real_delete(name)
+
+    monkeypatch.setattr(client, "delete_branch", faulty_delete)
+
+    res = merge_mod.merge_subagent_branches(
+        client, feature_branch=feat,
+        subagent_branches=[sub_a, sub_b],
+    )
+    # Both branches merged successfully (merge wasn't rolled back by failure).
+    assert len(res["merged"]) == 2
+    # sub_a delete failed; sub_b deleted normally.
+    failed_branches = [d["branch"] for d in res["delete_failed"]]
+    assert sub_a in failed_branches
+    assert any("simulated ref-protection" in d["error"] for d in res["delete_failed"])
+    assert sub_b in res["deleted"]
+    assert sub_a not in res["deleted"]
+    # File overlay still applied.
+    assert client.get_file_bytes("a.txt", feat) == b"a-content"
+    assert client.get_file_bytes("b.txt", feat) == b"b-content"
+
+
+# ---------------------------------------------------------------------------
+# Iter 3: Section B — should_decline + abandon
+# ---------------------------------------------------------------------------
+
+def test_should_decline_no_deps(client):
+    issue, _ = _seed_unclaimed(client)
+    fresh = client.get_issue(issue["number"])
+    decline, reason = plan_mod.should_decline(client, fresh)
+    assert decline is False
+    assert reason is None
+
+
+def test_should_decline_all_merged(client):
+    issue, _ = _seed_unclaimed(client)
+    # Wire up a merged PR.
+    client.create_branch("main")
+    client.put_file_contents("x", b"y", "m", "feat")
+    pr = client.create_pull_request(title="t", head="feat", base="main", body="b")
+    client.merge_pull_request(pr["number"])
+
+    meta = common.parse_agent_meta(client.get_issue(issue["number"])["body"])
+    meta["depends_on_prs"] = [pr["number"]]
+    client.update_issue(
+        issue["number"], body=common.render_agent_meta(meta, prose="P"),
+    )
+    fresh = client.get_issue(issue["number"])
+    decline, reason = plan_mod.should_decline(client, fresh)
+    assert decline is False
+    assert reason is None
+
+
+def test_should_decline_one_closed_unmerged(client):
+    """A PR that was closed without being merged triggers a decline."""
+    issue, _ = _seed_unclaimed(client)
+    client.create_branch("main")
+    client.put_file_contents("x", b"y", "m", "feat")
+    pr = client.create_pull_request(title="t", head="feat", base="main", body="b")
+    # Close without merging — we mutate state directly (no public API).
+    client._pulls[pr["number"]].state = "closed"
+    client._pulls[pr["number"]].merged = False
+
+    meta = common.parse_agent_meta(client.get_issue(issue["number"])["body"])
+    meta["depends_on_prs"] = [pr["number"]]
+    client.update_issue(
+        issue["number"], body=common.render_agent_meta(meta, prose="P"),
+    )
+    fresh = client.get_issue(issue["number"])
+    decline, reason = plan_mod.should_decline(client, fresh)
+    assert decline is True
+    assert reason is not None
+    assert "dependency_failed" in reason
+    assert f"#{pr['number']}" in reason
+
+
+def test_should_decline_missing_pr(client):
+    """A dependency PR that can't be fetched at all → declines as 'dependency_missing'."""
+    issue, _ = _seed_unclaimed(client)
+    meta = common.parse_agent_meta(client.get_issue(issue["number"])["body"])
+    meta["depends_on_prs"] = [9999]  # never created
+    client.update_issue(
+        issue["number"], body=common.render_agent_meta(meta, prose="P"),
+    )
+    fresh = client.get_issue(issue["number"])
+    decline, reason = plan_mod.should_decline(client, fresh)
+    assert decline is True
+    assert reason is not None
+    assert "dependency_missing" in reason
+    assert "#9999" in reason
+
+
+def test_should_decline_open_dep(client):
+    """An open (unmerged) dependency PR is NOT (yet) a decline.
+
+    Per impl: only `state=='closed' and not merged` is a hard failure.
+    Open deps simply gate the work; they don't cause a decline.
+    """
+    issue, _ = _seed_unclaimed(client)
+    client.create_branch("main")
+    client.put_file_contents("x", b"y", "m", "feat")
+    pr = client.create_pull_request(title="t", head="feat", base="main", body="b")
+    # PR is left open (default state)
+    assert client.get_pull_request(pr["number"])["state"] == "open"
+
+    meta = common.parse_agent_meta(client.get_issue(issue["number"])["body"])
+    meta["depends_on_prs"] = [pr["number"]]
+    client.update_issue(
+        issue["number"], body=common.render_agent_meta(meta, prose="P"),
+    )
+    fresh = client.get_issue(issue["number"])
+    decline, reason = plan_mod.should_decline(client, fresh)
+    # Documented behavior: open deps are not yet a decline.
+    assert decline is False
+    assert reason is None
+
+
+def test_abandon_idempotent(client):
+    """Calling abandon twice produces only one comment; status stays abandoned."""
+    issue, _ = _seed_unclaimed(client, status="working", agent_id="A",
+                                 status_ts=common.iso_now())
+    n = issue["number"]
+    claim_mod.abandon(client, n, "first reason")
+    pre_count = len(client.list_comments(n))
+
+    # Second call must be a no-op for comments.
+    claim_mod.abandon(client, n, "second reason")
+    post_count = len(client.list_comments(n))
+    assert pre_count == post_count == 1
+
+    fresh_meta = common.parse_agent_meta(client.get_issue(n)["body"])
+    assert fresh_meta["status"] == "abandoned"
+
+
+def test_abandon_writes_status_and_comment(client):
+    """abandon writes status='abandoned' + status_ts AND posts the reason as a comment."""
+    issue, _ = _seed_unclaimed(client, status="working", agent_id="A",
+                                 status_ts=common.iso_now())
+    n = issue["number"]
+    pre_ts = common.parse_agent_meta(client.get_issue(n)["body"])["status_ts"]
+
+    claim_mod.abandon(client, n, "merge_conflict")
+
+    fresh = common.parse_agent_meta(client.get_issue(n)["body"])
+    assert fresh["status"] == "abandoned"
+    assert fresh["status_ts"] is not None
+    # status_ts may match if test runs faster than the iso second resolution;
+    # at minimum it's been re-stamped (still a valid ISO).
+    assert fresh["status_ts"] >= pre_ts
+
+    comments = client.list_comments(n)
+    assert len(comments) == 1
+    assert "merge_conflict" in comments[0]["body"]
+    assert comments[0]["body"].startswith("Abandoning:")
+
+
+def test_abandon_unclaimed_issue(client):
+    """Calling abandon on a null-status (unclaimed) issue still succeeds:
+    sets status='abandoned' and posts the comment."""
+    issue, _ = _seed_unclaimed(client)  # status=None
+    n = issue["number"]
+    pre_meta = common.parse_agent_meta(client.get_issue(n)["body"])
+    assert pre_meta["status"] is None
+
+    claim_mod.abandon(client, n, "no longer needed")
+
+    fresh = common.parse_agent_meta(client.get_issue(n)["body"])
+    assert fresh["status"] == "abandoned"
+    comments = client.list_comments(n)
+    assert len(comments) == 1
+    assert "no longer needed" in comments[0]["body"]
+
+
+# ---------------------------------------------------------------------------
+# Coverage helpers — small edge cases on claim & select
+# ---------------------------------------------------------------------------
+
+def test_claim_called_without_candidates_returns_none(client, base_config):
+    """``claim(..., candidate_issues=None)`` defaults to [] and returns None."""
+    res = claim_mod.claim(
+        client, agent_id="A1",
+        candidate_issues=None, config=base_config,
+    )
+    assert res is None
+
+
+def test_claim_calls_sleep_when_verify_delay_set(client, base_config):
+    """When ``verify_delay > 0``, claim() invokes the supplied sleep callable."""
+    issue, _ = _seed_unclaimed(client)
+    sleeps = []
+    def fake_sleep(t):
+        sleeps.append(t)
+    res = claim_mod.claim(
+        client, agent_id="A1",
+        candidate_issues=[issue], config=base_config,
+        verify_delay=0.25, sleep=fake_sleep,
+    )
+    assert res is not None
+    assert sleeps == [0.25]
+
+
+def test_select_candidate_skips_issue_without_meta(client, base_config):
+    """An issue without an agent-meta block is silently skipped."""
+    # Build an issue with no agent-meta block.
+    plain = client.create_issue(title="plain", body="no meta here",
+                                  labels=["agent-task"])
+    fresh = client.get_issue(plain["number"])
+    pick = claim_mod.select_candidate(
+        [fresh], agent_task_label="agent-task", stale_seconds=10.0,
+    )
+    assert pick is None
+
+
+def test_select_candidate_skips_issue_without_label(client, base_config):
+    """An issue WITHOUT the agent-task label is not considered."""
+    issue, _ = _seed_unclaimed(client, extra_label=False)
+    pick = claim_mod.select_candidate(
+        [issue], agent_task_label="agent-task", stale_seconds=10.0,
+    )
+    assert pick is None
+
+
+def test_is_stale_treats_unparseable_ts_as_stale(client, base_config):
+    """A status_ts that fails to parse counts as stale."""
+    issue, _ = _seed_unclaimed(client, status="working", agent_id="X",
+                                 status_ts="not-an-iso-stamp")
+    res = claim_mod.claim(
+        client, agent_id="N",
+        candidate_issues=[issue], config=base_config,
+    )
+    # Stale → can be taken over by the new agent.
+    assert res is not None
+    assert res["agent_id"] == "N"
+
+
+def test_plan_no_meta_raises(client):
+    """plan() raises PlanError when the issue has no agent-meta block."""
+    plain = client.create_issue(title="t", body="no agent-meta", labels=[])
+    with pytest.raises(plan_mod.PlanError):
+        plan_mod.plan(client, issue_number=plain["number"])
+
+
+def test_plan_neither_inline_nor_path_raises(client):
+    """plan() raises when both ``instructions_inline`` and ``_path`` are absent."""
+    issue, _ = _seed_unclaimed(client, instructions_inline=None,
+                                instructions_path=None)
+    with pytest.raises(plan_mod.PlanError):
+        plan_mod.plan(client, issue_number=issue["number"])
+
+
+def test_plan_path_missing_on_base_raises(client):
+    """plan() raises when instructions_path doesn't exist on the base branch."""
+    issue, _ = _seed_unclaimed(
+        client, instructions_inline=None,
+        instructions_path="docs/missing.md",
+    )
+    if "main" not in client._branches:
+        client.create_branch("main")
+    with pytest.raises(plan_mod.PlanError):
+        plan_mod.plan(client, issue_number=issue["number"])
+
+
+def test_merge_unknown_strategy_raises(client):
+    """An unknown conflict_strategy is rejected with ValueError."""
+    with pytest.raises(ValueError):
+        merge_mod.merge_subagent_branches(
+            client, feature_branch="feat",
+            subagent_branches=[],
+            conflict_strategy="not-a-strategy",  # type: ignore[arg-type]
+        )
+
+
+def test_list_subagent_branches_filters_correctly():
+    """list_subagent_branches returns the lex-sorted matching prefix subset."""
+    branches = [
+        "agent/1-x",
+        "agent/1-x/sub-beta",
+        "agent/1-x/sub-alpha",
+        "agent/2-y",
+        "agent/2-y/sub-gamma",
+    ]
+    out = merge_mod.list_subagent_branches(branches, "agent/1-x")
+    assert out == ["agent/1-x/sub-alpha", "agent/1-x/sub-beta"]

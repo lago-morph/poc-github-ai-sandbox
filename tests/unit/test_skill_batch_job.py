@@ -329,3 +329,269 @@ def test_poll_without_heartbeat_works(client, base_config):
     )
     assert out["envelope"]["run_status"] == "completed"
     assert out["envelope"]["agent_ack"] == "finished"
+
+
+# ---------------------------------------------------------------------------
+# Iter 3: Section C — runner-failure issue creation on poll timeout
+# ---------------------------------------------------------------------------
+
+def _find_runner_failure_issues(client):
+    out = []
+    for n, issue in client._issues.items():
+        if "runner-failure" in [l for l in issue.labels]:
+            out.append(client.get_issue(n))
+    return out
+
+
+def test_poll_runner_pickup_timeout_creates_runner_failure_issue(client, fast_poll_config):
+    """On runner_pickup_timeout: a new issue is opened with labels
+    runner-failure + agent-task; body parses to a valid agent-meta with
+    status: null AND contains the original envelope. PollTimeout is raised."""
+    issue, _ = _seed_locked_issue(client, agent_id="A")
+    sha = client.create_branch("br")
+    c = _post_request(client, issue["number"], sha)
+    clock = _ManualClock()
+
+    def adv_sleep(t):
+        clock.advance(max(t, 1.0))
+
+    with pytest.raises(PollTimeout) as ei:
+        poll_mod.poll(
+            client, comment_id=c["id"], command="echo",
+            config=fast_poll_config, sleep=adv_sleep, now=clock,
+        )
+    assert ei.value.kind == "runner_pickup_timeout"
+
+    rf_issues = _find_runner_failure_issues(client)
+    assert len(rf_issues) == 1
+    rf = rf_issues[0]
+    label_names = [l["name"] for l in rf["labels"]]
+    assert "runner-failure" in label_names
+    assert "agent-task" in label_names
+
+    meta = common.parse_agent_meta(rf["body"])
+    assert meta is not None
+    assert meta["status"] is None
+    # Original envelope's command/args should be in the body prose.
+    assert "\"command\": \"echo\"" in rf["body"]
+    # Comment id is referenced.
+    assert str(c["id"]) in rf["body"]
+
+
+def test_poll_running_timeout_creates_runner_failure_issue(client, fast_poll_config):
+    """Same as above but for running_timeout."""
+    issue, _ = _seed_locked_issue(client, agent_id="A")
+    sha = client.create_branch("br")
+    c = _post_request(client, issue["number"], sha)
+    env = json.loads(c["body"])
+    env.update({
+        "run_status": "running",
+        "run_started_at": common.iso_now(),
+        "workflow_run_id": 1,
+        "checked_out_sha": sha,
+    })
+    client.update_comment(c["id"], json.dumps(env))
+
+    cfg = json.loads(json.dumps(fast_poll_config))
+    cfg["comment"]["running_timeout_seconds"] = 1
+    cfg["comment"]["poll_total_timeout_seconds"] = 300
+    clock = _ManualClock()
+
+    def adv_sleep(t):
+        clock.advance(max(t, 1.0))
+
+    with pytest.raises(PollTimeout) as ei:
+        poll_mod.poll(
+            client, comment_id=c["id"], command="echo",
+            config=cfg, sleep=adv_sleep, now=clock,
+        )
+    assert ei.value.kind == "running_timeout"
+
+    rf_issues = _find_runner_failure_issues(client)
+    assert len(rf_issues) == 1
+    rf = rf_issues[0]
+    label_names = [l["name"] for l in rf["labels"]]
+    assert "runner-failure" in label_names
+    assert "agent-task" in label_names
+    meta = common.parse_agent_meta(rf["body"])
+    assert meta is not None
+    assert meta["status"] is None
+    # Body mentions the running_timeout kind.
+    assert "running_timeout" in rf["body"]
+
+
+def test_poll_failure_to_create_runner_issue_does_not_mask_timeout(
+    client, fast_poll_config, monkeypatch
+):
+    """If client.create_issue raises during runner-failure issue creation,
+    PollTimeout MUST still be raised — the timeout is the primary error."""
+    issue, _ = _seed_locked_issue(client, agent_id="A")
+    sha = client.create_branch("br")
+    c = _post_request(client, issue["number"], sha)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated GH API failure")
+
+    monkeypatch.setattr(client, "create_issue", boom)
+
+    clock = _ManualClock()
+
+    def adv_sleep(t):
+        clock.advance(max(t, 1.0))
+
+    with pytest.raises(PollTimeout) as ei:
+        poll_mod.poll(
+            client, comment_id=c["id"], command="echo",
+            config=fast_poll_config, sleep=adv_sleep, now=clock,
+        )
+    assert ei.value.kind == "runner_pickup_timeout"
+    # No runner-failure issue should have been created (boom raised).
+    assert _find_runner_failure_issues(client) == []
+
+
+def test_poll_runner_failure_issue_includes_comment_id_and_envelope(client, fast_poll_config):
+    """The runner-failure issue body must reference comment id and contain
+    the original envelope JSON."""
+    issue, _ = _seed_locked_issue(client, agent_id="A")
+    sha = client.create_branch("br")
+    c = _post_request(client, issue["number"], sha)
+    clock = _ManualClock()
+
+    def adv_sleep(t):
+        clock.advance(max(t, 1.0))
+
+    with pytest.raises(PollTimeout):
+        poll_mod.poll(
+            client, comment_id=c["id"], command="echo",
+            config=fast_poll_config, sleep=adv_sleep, now=clock,
+        )
+
+    rf = _find_runner_failure_issues(client)[0]
+    # Body contains comment id explicitly.
+    assert str(c["id"]) in rf["body"]
+    # Body contains the original envelope's JSON marker — pick a couple of stable fields.
+    assert "\"protocol_version\": 1" in rf["body"]
+    assert "\"command\": \"echo\"" in rf["body"]
+    assert "\"branch\": \"br\"" in rf["body"]
+
+
+# ---------------------------------------------------------------------------
+# Poll edge cases for coverage
+# ---------------------------------------------------------------------------
+
+def test_poll_raises_on_invalid_json_in_comment(client, fast_poll_config):
+    """If the comment body is not valid JSON, poll() raises RuntimeError."""
+    issue, _ = _seed_locked_issue(client, agent_id="A")
+    c = client.add_comment(issue["number"], "not-valid-json {[")
+    with pytest.raises(RuntimeError) as ei:
+        poll_mod.poll(
+            client, comment_id=c["id"], command="echo",
+            config=fast_poll_config, sleep=_no_sleep, now=_ManualClock(),
+        )
+    assert "JSON" in str(ei.value) or "json" in str(ei.value)
+
+
+def test_poll_summary_json_decode_error_returns_none(client, base_config):
+    """If summary.json on _agent_runs is not valid JSON, summary_json is None
+    (not raise)."""
+    issue, _ = _seed_locked_issue(client, agent_id="A")
+    sha = client.create_branch("br")
+    c = _post_request(client, issue["number"], sha)
+    env = json.loads(c["body"])
+    env.update({
+        "run_status": "completed",
+        "run_started_at": common.iso_now(),
+        "run_finished_at": common.iso_now(),
+        "workflow_run_id": 1,
+        "checked_out_sha": sha,
+        "summary": {"echoed_args": {"message": "x"}, "message": "x"},
+        "log_manifest_branch": "_agent_runs",
+        "log_manifest_path": f"runs/{issue['number']}/{c['id']}/manifest.json",
+    })
+    client.update_comment(c["id"], json.dumps(env))
+    # Seed a deliberately corrupt summary.json.
+    client.put_file_contents(
+        f"runs/{issue['number']}/{c['id']}/summary.json",
+        b"{ this is not json",
+        "msg", "_agent_runs",
+    )
+    out = poll_mod.poll(
+        client, comment_id=c["id"], command="echo",
+        config=base_config, sleep=_no_sleep, now=_ManualClock(),
+    )
+    assert out["summary_json"] is None
+    # Envelope summary still flows through.
+    assert out["summary"]["message"] == "x"
+
+
+def test_poll_total_timeout_raises_with_kind(client, fast_poll_config):
+    """Tighten total deadline and have the comment stay in 'running' so the
+    total-timeout branch is exercised."""
+    issue, _ = _seed_locked_issue(client, agent_id="A")
+    sha = client.create_branch("br")
+    c = _post_request(client, issue["number"], sha)
+    env = json.loads(c["body"])
+    env.update({
+        "run_status": "running",
+        "run_started_at": common.iso_now(),
+        "workflow_run_id": 1,
+        "checked_out_sha": sha,
+    })
+    client.update_comment(c["id"], json.dumps(env))
+
+    # running_timeout very large; total_timeout very small — total should fire.
+    cfg = json.loads(json.dumps(fast_poll_config))
+    cfg["comment"]["running_timeout_seconds"] = 100_000
+    cfg["comment"]["poll_total_timeout_seconds"] = 1
+    cfg["comment"]["runner_pickup_timeout_seconds"] = 100_000
+
+    clock = _ManualClock()
+
+    def adv_sleep(t):
+        clock.advance(max(t, 5.0))
+
+    with pytest.raises(PollTimeout) as ei:
+        poll_mod.poll(
+            client, comment_id=c["id"], command="echo",
+            config=cfg, sleep=adv_sleep, now=clock,
+        )
+    assert ei.value.kind == "poll_total_timeout"
+
+
+def test_poll_interval_backoff_chosen(client, base_config):
+    """_interval_for_elapsed picks the highest-matching step from poll_backoff."""
+    interval = poll_mod._interval_for_elapsed(700.0, base_config)
+    # base_config has steps at 300 (60) and 600 (120); at 700 the chosen
+    # interval should be 120.
+    assert interval == 120.0
+
+
+def test_poll_get_comment_failure_yields_no_parent_issue(client, fast_poll_config, monkeypatch):
+    """If client.get_comment raises BEFORE the loop (during parent issue lookup),
+    parent_issue_number stays None — the timeout still fires correctly."""
+    issue, _ = _seed_locked_issue(client, agent_id="A")
+    sha = client.create_branch("br")
+    c = _post_request(client, issue["number"], sha)
+
+    real_get = client.get_comment
+    calls = {"n": 0}
+
+    def faulty_get(cid):
+        calls["n"] += 1
+        # Raise only on the very first call (the parent_issue_number lookup).
+        if calls["n"] == 1:
+            raise RuntimeError("transient network blip")
+        return real_get(cid)
+
+    monkeypatch.setattr(client, "get_comment", faulty_get)
+    clock = _ManualClock()
+
+    def adv_sleep(t):
+        clock.advance(max(t, 1.0))
+
+    with pytest.raises(PollTimeout) as ei:
+        poll_mod.poll(
+            client, comment_id=c["id"], command="echo",
+            config=fast_poll_config, sleep=adv_sleep, now=clock,
+        )
+    assert ei.value.kind == "runner_pickup_timeout"

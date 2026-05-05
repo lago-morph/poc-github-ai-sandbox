@@ -441,3 +441,114 @@ def test_handler_proceeds_when_comment_author_is_random(client, base_config, loc
     )
     assert res["action"] == "ran"
     assert res["run_status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# Iter 3: Section E — missing_schema error kind
+# ---------------------------------------------------------------------------
+
+def test_handler_missing_schema_yields_error_with_missing_schema_kind(
+    client, base_config, locked_issue_with_branch,
+):
+    """A command registered in cfg['commands'] but with no schema file on disk
+    must produce a terminal error with error_kind='missing_schema'."""
+    fix = locked_issue_with_branch
+    # Augment config with a phantom command (no .schema.json file).
+    cfg = json.loads(json.dumps(base_config))  # deep copy
+    cfg["commands"] = list(cfg["commands"]) + ["phantom-cmd"]
+
+    env = make_envelope(
+        command="phantom-cmd", args={},
+        branch=fix["branch"], commit_sha=fix["sha"],
+    )
+    cid = _post_envelope(client, fix["issue_number"], env)
+    res = handler.run(
+        client, fix["issue_number"], cid,
+        config=cfg, repo_root=str(REPO_ROOT),
+    )
+    final = json.loads(client.get_comment(cid)["body"])
+    assert res["action"] == "error"
+    assert res["error_kind"] == "missing_schema"
+    assert final["run_status"] == "error"
+    assert final["error_kind"] == "missing_schema"
+    assert "phantom-cmd" in final["error_detail"]
+
+
+# ---------------------------------------------------------------------------
+# Iter 3: Section H — additional handler edge cases
+# ---------------------------------------------------------------------------
+
+def test_handler_command_raises_during_run_records_partial_logs(
+    client, base_config, locked_issue_with_branch, monkeypatch,
+):
+    """Command writes some logs before raising — manifest still records them
+    and the terminal envelope is the error variant."""
+    fix = locked_issue_with_branch
+
+    def writes_then_raises(args, log_writer, workspace):
+        log_writer.write({"ts": common.iso_now(), "stream": "stdout",
+                          "phase": "exec", "data": "step 1 done"})
+        log_writer.write({"ts": common.iso_now(), "stream": "stderr",
+                          "phase": "exec", "data": "warning: weird input"})
+        raise RuntimeError("boom mid-run")
+
+    monkeypatch.setattr(handler, "_load_command_handler", lambda command: writes_then_raises)
+
+    env = make_envelope(
+        command="echo", branch=fix["branch"], commit_sha=fix["sha"],
+    )
+    cid = _post_envelope(client, fix["issue_number"], env)
+    res = handler.run(
+        client, fix["issue_number"], cid,
+        config=base_config, repo_root=str(REPO_ROOT),
+    )
+    final = json.loads(client.get_comment(cid)["body"])
+    assert res["run_status"] == "error"
+    assert final["run_status"] == "error"
+    assert final["error_kind"] == "RuntimeError"
+    # Manifest path was recorded and is reachable on the logs branch.
+    manifest_raw = client.get_file_contents(final["log_manifest_path"], "_agent_runs")
+    assert manifest_raw is not None
+    manifest = json.loads(manifest_raw)
+    # Partial logs survived — at least one chunk with the lines we wrote
+    # (plus the traceback line that the handler itself writes on exception).
+    total_lines = sum(c["lines"] for c in manifest["chunks"])
+    assert total_lines >= 2  # our two writes + traceback
+
+
+def test_concurrent_terminal_writes_idempotent(
+    client, base_config, locked_issue_with_branch,
+):
+    """Calling handler.run twice on the same comment is a no-op the second
+    time AND chunks are not duplicated under _agent_runs."""
+    fix = locked_issue_with_branch
+    env = make_envelope(
+        command="echo", branch=fix["branch"], commit_sha=fix["sha"],
+    )
+    cid = _post_envelope(client, fix["issue_number"], env)
+    res1 = handler.run(
+        client, fix["issue_number"], cid,
+        config=base_config, repo_root=str(REPO_ROOT),
+    )
+    assert res1["action"] == "ran"
+
+    final1 = json.loads(client.get_comment(cid)["body"])
+    log_dir = final1["log_manifest_path"].rsplit("/", 1)[0]
+
+    # Capture the chunk-listing on _agent_runs by walking commits' files.
+    head = client.get_branch_head_sha("_agent_runs")
+    files_before = dict(client._commits[head].files)
+    chunks_before = sorted(p for p in files_before if p.startswith(f"{log_dir}/log-"))
+
+    # Second run on the same comment — must noop on the envelope side.
+    res2 = handler.run(
+        client, fix["issue_number"], cid,
+        config=base_config, repo_root=str(REPO_ROOT),
+    )
+    assert res2["action"] == "noop"
+
+    head2 = client.get_branch_head_sha("_agent_runs")
+    files_after = dict(client._commits[head2].files)
+    chunks_after = sorted(p for p in files_after if p.startswith(f"{log_dir}/log-"))
+    # No new chunk files for this run dir.
+    assert chunks_after == chunks_before

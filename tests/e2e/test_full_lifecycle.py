@@ -28,6 +28,11 @@ submit_mod = _load(
 poll_mod = _load(
     "skills_batchjob_poll", REPO_ROOT / "skills" / "batch-job" / "poll.py"
 )
+claim_mod = _load(
+    "skills_taskdag_claim", REPO_ROOT / "skills" / "task-dag" / "claim.py"
+)
+
+PollTimeout = poll_mod.PollTimeout
 
 import agent_protocol_common as common
 import handler
@@ -330,3 +335,157 @@ def test_e2e_unsupported_version_recovery(client, base_config):
     e2 = json.loads(client.get_comment(c2["id"])["body"])
     assert e2["run_status"] == "completed"
     assert e2["summary"]["message"] == "second"
+
+
+# ---------------------------------------------------------------------------
+# Iter 3: Section G — merge-conflict abandon + runner-failure path
+# ---------------------------------------------------------------------------
+
+def test_e2e_merge_conflict_aborts_pr(client, base_config):
+    """Two subagent branches modify the same file; default merge fails →
+    primary abandons issue with reason 'merge_conflict'; PR is NOT opened;
+    issue ends up with status='abandoned'."""
+    meta = make_agent_meta(
+        feature_branch="agent/55-conflict",
+        instructions_inline="Conflict scenario.",
+    )
+    body = common.render_agent_meta(meta, prose="conflict")
+    with client.as_user("my-bot"):
+        issue = client.create_issue(title="conflict", body=body)
+    n = issue["number"]
+    lock_and_sweep.run(client, n, config=base_config)
+
+    # Claim the issue.
+    claimed_meta = dict(meta)
+    claimed_meta.update({
+        "agent_id": "primary-cf", "status": "working",
+        "session_id": "s-cf", "status_ts": common.iso_now(),
+    })
+    client.update_issue(n, body=common.render_agent_meta(claimed_meta, prose="conflict"))
+
+    # Set up base + feature branch + 2 subagent branches that BOTH touch
+    # the same file with different content.
+    client.create_branch("main")
+    client.put_file_contents("collide.txt", b"base", "init", "agent/55-conflict")
+    feat = "agent/55-conflict"
+    sub_a = f"{feat}/sub-alpha"
+    sub_b = f"{feat}/sub-beta"
+    client.create_branch(sub_a, from_branch=feat)
+    client.commit_files(sub_a, {"collide.txt": b"alpha-version"}, "alpha")
+    client.create_branch(sub_b, from_branch=feat)
+    client.commit_files(sub_b, {"collide.txt": b"beta-version"}, "beta")
+
+    # Subagents run their jobs successfully.
+    for sub_name, sub_branch in (("alpha", sub_a), ("beta", sub_b)):
+        sha = client.get_branch_head_sha(sub_branch)
+        with client.as_user("my-bot"):
+            comment = submit_mod.submit(
+                client, issue_number=n, command="echo",
+                args={"message": f"work-{sub_name}"},
+                branch=sub_branch, commit_sha=sha,
+                subagent_id=sub_name, agent_id="primary-cf",
+                config=base_config,
+            )
+        handler.run(client, n, comment["id"], config=base_config, repo_root=str(REPO_ROOT))
+        env = json.loads(client.get_comment(comment["id"])["body"])
+        assert env["run_status"] == "completed"
+
+    # Primary tries to merge — default conflict_strategy='fail' raises.
+    pre_feat_sha = client.get_branch_head_sha(feat)
+    with pytest.raises(merge_mod.MergeConflictError) as ei:
+        merge_mod.merge_subagent_branches(
+            client, feature_branch=feat,
+            subagent_branches=[sub_a, sub_b],
+        )
+    assert "collide.txt" in ei.value.conflicts
+    # No partial merge: feat SHA unchanged.
+    assert client.get_branch_head_sha(feat) == pre_feat_sha
+
+    # Primary abandons the issue with reason 'merge_conflict'.
+    pre_pr_count = len(client._pulls)
+    claim_mod.abandon(client, n, "merge_conflict")
+    # No PR was opened.
+    assert len(client._pulls) == pre_pr_count
+
+    # Issue is in abandoned state with the expected comment.
+    fresh_meta = common.parse_agent_meta(client.get_issue(n)["body"])
+    assert fresh_meta["status"] == "abandoned"
+    abandon_comments = [
+        c for c in client.list_comments(n)
+        if c["body"].startswith("Abandoning:")
+    ]
+    assert len(abandon_comments) == 1
+    assert "merge_conflict" in abandon_comments[0]["body"]
+
+
+def test_e2e_runner_failure_path(client, base_config):
+    """Submit a job comment that the workflow handler doesn't pick up
+    (we simulate by NOT invoking handler). Poll runs to runner-pickup
+    timeout: assert a runner-failure issue exists, PollTimeout is raised,
+    primary then abandons."""
+    # Build a fast-polling config so the test doesn't hang.
+    cfg = json.loads(json.dumps(base_config))
+    cfg["comment"]["runner_pickup_timeout_seconds"] = 1
+    cfg["comment"]["running_timeout_seconds"] = 1
+    cfg["comment"]["poll_total_timeout_seconds"] = 5
+    cfg["comment"]["poll_initial_seconds"] = 0
+    cfg["comment"]["poll_backoff"] = []
+
+    meta = make_agent_meta(
+        feature_branch="agent/88-runner",
+        instructions_inline="Will not be picked up.",
+    )
+    body = common.render_agent_meta(meta, prose="runner")
+    with client.as_user("my-bot"):
+        issue = client.create_issue(title="runner-failure-e2e", body=body,
+                                     labels=["agent-task"])
+    n = issue["number"]
+    client.lock_issue(n)
+
+    claimed_meta = dict(meta)
+    claimed_meta.update({
+        "agent_id": "primary-rf", "status": "working",
+        "session_id": "s-rf", "status_ts": common.iso_now(),
+    })
+    client.update_issue(n, body=common.render_agent_meta(claimed_meta, prose="runner"))
+
+    client.create_branch("main")
+    sha = client.create_branch("agent/88-runner")
+
+    # Submit batch-job-request — but DO NOT run the handler.
+    with client.as_user("my-bot"):
+        c = submit_mod.submit(
+            client, issue_number=n, command="echo",
+            args={"message": "no-runner"},
+            branch="agent/88-runner", commit_sha=sha,
+            subagent_id="alpha", agent_id="primary-rf",
+            config=cfg,
+        )
+
+    clock = _Clock()
+
+    def adv_sleep(t):
+        clock.advance(max(t, 1.0))
+
+    with pytest.raises(PollTimeout) as ei:
+        poll_mod.poll(
+            client, comment_id=c["id"], command="echo",
+            config=cfg, sleep=adv_sleep, now=clock,
+        )
+    assert ei.value.kind == "runner_pickup_timeout"
+
+    # A runner-failure issue exists.
+    rf_issues = []
+    for num, iss in client._issues.items():
+        if "runner-failure" in iss.labels:
+            rf_issues.append(client.get_issue(num))
+    assert len(rf_issues) == 1
+    rf = rf_issues[0]
+    rf_meta = common.parse_agent_meta(rf["body"])
+    assert rf_meta["status"] is None
+    assert rf_meta["parent_issue"] == n
+
+    # Primary now abandons the original issue with reason 'runner_failure'.
+    claim_mod.abandon(client, n, "runner_failure")
+    fresh = common.parse_agent_meta(client.get_issue(n)["body"])
+    assert fresh["status"] == "abandoned"
