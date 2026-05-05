@@ -136,6 +136,12 @@ class GitHubClient(Protocol):
     ) -> dict[str, Any]: ...
     def lock_issue(self, number: int) -> None: ...
     def add_label(self, number: int, label: str) -> None: ...
+    def create_issue(
+        self,
+        title: str,
+        body: str,
+        labels: Optional[list[str]] = None,
+    ) -> dict[str, Any]: ...
 
     # Comment operations ---------------------------------------------------
     def list_comments(self, issue_number: int) -> list[dict[str, Any]]: ...
@@ -602,6 +608,66 @@ def _new_sha() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Log sanitisation (SPEC §14)
+# ---------------------------------------------------------------------------
+
+# GitHub PAT/OAuth-style tokens.
+_RE_GH_TOKEN = re.compile(r"gh[ps]_[A-Za-z0-9]{36,}")
+# AWS access key id.
+_RE_AWS_KEY = re.compile(r"AKIA[0-9A-Z]{16}")
+# Bearer tokens in Authorization-style strings.
+_RE_BEARER = re.compile(r"Bearer\s+[A-Za-z0-9._\-]{20,}")
+# Generic key=value patterns where the key looks secret-shaped. We
+# intentionally redact only the captured group so the rest of the
+# string (including the key name and separator) survives for context.
+_RE_GENERIC_SECRET = re.compile(
+    r"(?i)(?:api[_-]?key|secret|token|password)[\"'\s:=]+([A-Za-z0-9_\-]{16,})"
+)
+
+
+def _sanitize_string(s: str) -> str:
+    """Redact common secret patterns in a single string."""
+    out = _RE_GH_TOKEN.sub("***", s)
+    out = _RE_AWS_KEY.sub("***", out)
+    out = _RE_BEARER.sub("Bearer ***", out)
+
+    def _redact_group(m: re.Match[str]) -> str:
+        whole = m.group(0)
+        captured = m.group(1)
+        # Replace just the captured secret value with ``***``.
+        start, end = m.span(1)
+        # m.span is relative to the whole input string, not to ``whole``.
+        return whole[: start - m.start()] + "***" + whole[end - m.start():]
+
+    out = _RE_GENERIC_SECRET.sub(_redact_group, out)
+    return out
+
+
+def sanitize_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Return a deep-copied record with common secret patterns redacted.
+
+    Per SPEC §14: log content on a public repo is world-readable, so
+    the handler should pass log records through a sanitiser that drops
+    anything matching common secret patterns before writing chunks.
+
+    The original ``record`` is NOT mutated.
+    """
+
+    def _walk(node: Any) -> Any:
+        if isinstance(node, str):
+            return _sanitize_string(node)
+        if isinstance(node, dict):
+            return {k: _walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [_walk(v) for v in node]
+        if isinstance(node, tuple):
+            return tuple(_walk(v) for v in node)
+        return node
+
+    return _walk(record)
+
+
+# ---------------------------------------------------------------------------
 # LogWriter
 # ---------------------------------------------------------------------------
 
@@ -624,15 +690,21 @@ class LogWriter:
         ...
         chunks = lw.finalize()        # list[(path, bytes, dict)]
         manifest = lw.manifest(...)   # build manifest dict
+
+    Records are passed through :func:`sanitize_record` before being
+    serialised, unless the writer was constructed with
+    ``sanitize=False``.
     """
 
     def __init__(
         self,
         max_chunk_bytes_compressed: int = 524_288,
         chunk_name_template: str = "log-{n:04d}.jsonl.gz",
+        sanitize: bool = True,
     ) -> None:
         self._max = int(max_chunk_bytes_compressed)
         self._template = chunk_name_template
+        self._sanitize = bool(sanitize)
         self._buf = io.BytesIO()
         self._gz = gzip.GzipFile(fileobj=self._buf, mode="wb", mtime=0)
         self._cur_lines = 0
@@ -664,10 +736,15 @@ class LogWriter:
 
     # ------------------------------------------------------------------
     def write(self, record: dict[str, Any]) -> None:
-        """Append one JSON record (one line) to the current chunk."""
+        """Append one JSON record (one line) to the current chunk.
+
+        When ``sanitize=True`` (default), the record is passed through
+        :func:`sanitize_record` before serialisation.
+        """
         if self._closed:
             raise RuntimeError("LogWriter is closed")
-        line = (json.dumps(record, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
+        payload = sanitize_record(record) if self._sanitize else record
+        line = (json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
         self._gz.write(line)
         self._cur_lines += 1
         # Rotate after writing so chunks contain at least one line.
@@ -805,4 +882,5 @@ __all__ = [
     "slugify",
     "is_terminal_run_status",
     "has_protocol_markers",
+    "sanitize_record",
 ]

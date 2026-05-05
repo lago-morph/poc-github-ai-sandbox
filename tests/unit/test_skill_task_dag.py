@@ -310,6 +310,10 @@ def test_merge_conflict_two_branches_modify_same_file(client, base_config):
     The in-memory POC merge applies file-overlays in subagent_branches list
     order (sorted, then iterated). The last branch to overlay wins for any
     overlapping path. This documents the actual implementation choice.
+
+    Iter 3 changed the default ``conflict_strategy`` to ``"fail"`` per
+    SPEC §6 — to keep this test exercising backward-compatible LWW
+    behaviour we explicitly opt back into it.
     """
     client.create_branch("main")
     client.put_file_contents("shared.txt", b"base", "init", "agent/1-x")
@@ -325,6 +329,7 @@ def test_merge_conflict_two_branches_modify_same_file(client, base_config):
     # Note: sub_a < sub_b lexically, so sub_b is applied after sub_a.
     res = merge_mod.merge_subagent_branches(
         client, feature_branch=feat, subagent_branches=[sub_a, sub_b],
+        conflict_strategy="last-writer-wins",
     )
     assert len(res["merged"]) == 2
     # Last-writer-wins semantic: sub_b wins (overlay applied last).
@@ -341,6 +346,7 @@ def test_merge_conflict_two_branches_modify_same_file(client, base_config):
     client.commit_files(sub_b, {"shared.txt": b"beta-version"}, "beta")
     res2 = merge_mod.merge_subagent_branches(
         client, feature_branch=feat, subagent_branches=[sub_b, sub_a],
+        conflict_strategy="last-writer-wins",
     )
     assert len(res2["merged"]) == 2
     assert client.get_file_bytes("shared.txt", feat) == b"alpha-version"

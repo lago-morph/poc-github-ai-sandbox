@@ -182,3 +182,32 @@ def heartbeat(
     new_body = render_agent_meta(meta, prose=_extract_prose(issue.get("body") or ""))
     client.update_issue(issue_number, body=new_body)
     return True
+
+
+def abandon(
+    client: GitHubClient,
+    issue_number: int,
+    reason: str,
+) -> dict[str, Any]:
+    """Mark an issue as ``abandoned`` (SPEC §4.1, §12).
+
+    Sets ``status="abandoned"`` in the issue's agent-meta and posts a
+    comment "Abandoning: <reason>". Returns the updated meta dict.
+
+    Idempotent: if the issue is already abandoned, no second comment is
+    posted and the meta is returned unchanged.
+    """
+    issue = client.get_issue(issue_number)
+    meta = parse_agent_meta(issue.get("body")) or {}
+
+    if meta.get("status") == "abandoned":
+        return meta
+
+    meta["status"] = "abandoned"
+    meta["status_ts"] = iso_now()
+    new_body = render_agent_meta(
+        meta, prose=_extract_prose(issue.get("body") or "")
+    )
+    client.update_issue(issue_number, body=new_body)
+    client.add_comment(issue_number, f"Abandoning: {reason}")
+    return meta

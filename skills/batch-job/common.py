@@ -48,6 +48,7 @@ load_config = _common.load_config
 load_schema = _common.load_schema
 validate = _common.validate
 parse_agent_meta = _common.parse_agent_meta
+render_agent_meta = _common.render_agent_meta
 b64_encode = _common.b64_encode
 b64_decode = _common.b64_decode
 new_uuid = _common.new_uuid
@@ -67,6 +68,7 @@ __all__ = [
     "load_schema",
     "validate",
     "parse_agent_meta",
+    "render_agent_meta",
     "b64_encode",
     "b64_decode",
     "new_uuid",

@@ -3,11 +3,16 @@
 Reads either ``instructions_inline`` from the agent-meta or fetches
 ``instructions_path`` via the GitHub client. Returns the brief plus
 any pre-declared structure the spec leaves room for in v1.
+
+Also exposes :func:`should_decline` which inspects ``depends_on_prs``
+on an issue's agent-meta and reports whether the issue should be
+declined (per SPEC §4.1, §12: failed required dependency leads to
+``status="abandoned"``).
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 try:
     from .common import GitHubClient, parse_agent_meta
@@ -73,3 +78,37 @@ def plan(
     raise PlanError(
         f"issue #{issue_number} has neither instructions_inline nor _path"
     )
+
+
+def should_decline(
+    client: GitHubClient,
+    issue: dict[str, Any],
+) -> Tuple[bool, Optional[str]]:
+    """Per SPEC §4.1, §12: decide whether to decline (abandon) this issue.
+
+    Inspects ``depends_on_prs`` on the issue's agent-meta. For each listed
+    PR number:
+
+    - If the PR is closed-without-merge (``state == "closed"`` and
+      ``merged is False``) -> declines with reason
+      ``"dependency_failed: PR #<N> closed without merge"``.
+    - If the PR cannot be fetched (raises) -> declines with reason
+      ``"dependency_missing: PR #<N>"``.
+
+    Returns ``(False, None)`` when no listed PR is in a failure state.
+    Returns ``(True, reason)`` on the first failure encountered.
+    """
+    meta = parse_agent_meta(issue.get("body")) or {}
+    depends = meta.get("depends_on_prs") or []
+    for n in depends:
+        try:
+            pr = client.get_pull_request(int(n))
+        except Exception:  # noqa: BLE001 - any fetch failure -> dependency missing
+            return True, f"dependency_missing: PR #{n}"
+
+        state = pr.get("state")
+        merged = bool(pr.get("merged"))
+        if state == "closed" and not merged:
+            return True, f"dependency_failed: PR #{n} closed without merge"
+
+    return False, None
