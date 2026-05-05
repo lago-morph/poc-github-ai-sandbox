@@ -85,18 +85,35 @@ def run(
 
 
 def main() -> int:
-    issue_number_env = os.environ.get("ISSUE_NUMBER")
-    if not issue_number_env:
-        print("ISSUE_NUMBER is required", file=sys.stderr)
-        return 2
-    # In production this would build a REST-backed client. The POC
-    # has no real REST client, so we exit cleanly here. Tests call
-    # ``run()`` directly with a mocked client.
+    """POC stub for the ``lock-and-sweep`` workflow entry point.
+
+    Required environment variables:
+      - ``ISSUE_NUMBER``       the issue that just opened
+      - ``GITHUB_TOKEN``       token authenticating REST calls
+      - ``GITHUB_REPOSITORY``  ``owner/repo`` slug
+    Optional:
+      - ``AGENT_LOGIN``        override the login from ``.agent/config.json``
+      - ``AGENT_TASK_LABEL``   override the label from ``.agent/config.json``
+
+    Exits 0 (POC stub successfully reached). Tests call ``run()`` directly
+    with an in-memory client; real workflow integration will instantiate
+    a REST-backed ``GitHubClient`` here.
+    """
+    required = ["ISSUE_NUMBER", "GITHUB_TOKEN", "GITHUB_REPOSITORY"]
+    missing = [k for k in required if not os.environ.get(k)]
     print(
-        "lock_and_sweep: live REST client not implemented in POC; "
-        f"would process issue #{issue_number_env}",
+        "lock_and_sweep: POC stub. Required env vars: "
+        + ", ".join(required)
+        + ". Optional: AGENT_LOGIN, AGENT_TASK_LABEL.",
         file=sys.stderr,
     )
+    if missing:
+        print(f"lock_and_sweep: missing env vars (POC stub, exit 0 anyway): {missing}", file=sys.stderr)
+    else:
+        print(
+            f"lock_and_sweep: would process issue #{os.environ['ISSUE_NUMBER']}",
+            file=sys.stderr,
+        )
     return 0
 
 

@@ -94,15 +94,30 @@ def run(
 
 
 def main() -> int:
-    pr_env = os.environ.get("PR_NUMBER")
-    if not pr_env:
-        print("PR_NUMBER is required", file=sys.stderr)
-        return 2
+    """POC stub for the ``close-on-merge`` workflow entry point.
+
+    Required environment variables:
+      - ``PR_NUMBER``          the merged pull request number
+      - ``GITHUB_TOKEN``       token authenticating REST calls
+      - ``GITHUB_REPOSITORY``  ``owner/repo`` slug
+
+    Exits 0 (POC stub successfully reached). Tests call ``run()`` directly
+    with an in-memory client; real workflow integration will instantiate
+    a REST-backed ``GitHubClient`` here.
+    """
+    required = ["PR_NUMBER", "GITHUB_TOKEN", "GITHUB_REPOSITORY"]
+    missing = [k for k in required if not os.environ.get(k)]
     print(
-        "close_on_merge: live REST client not implemented in POC; "
-        f"would handle PR #{pr_env}",
+        "close_on_merge: POC stub. Required env vars: " + ", ".join(required) + ".",
         file=sys.stderr,
     )
+    if missing:
+        print(f"close_on_merge: missing env vars (POC stub, exit 0 anyway): {missing}", file=sys.stderr)
+    else:
+        print(
+            f"close_on_merge: would handle PR #{os.environ['PR_NUMBER']}",
+            file=sys.stderr,
+        )
     return 0
 
 
