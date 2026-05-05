@@ -74,19 +74,27 @@ def test_submit_builds_envelope_and_posts(client, base_config):
     assert body["run_status"] is None
 
 
-def test_submit_preflight_unlocked(client, base_config):
+def test_submit_preflight_unlocked_is_allowed(client, base_config):
+    """Submitting against an UNLOCKED issue must succeed: the protocol
+    no longer locks at creation (locking moved to close_on_merge so
+    GITHUB_TOKEN can still comment). The batch-job-handler's label +
+    author ``if:`` filter is what makes foreign comments inert.
+    See SPEC §3 (Real-world correction)."""
     meta = make_agent_meta(agent_id="A")
     body = common.render_agent_meta(meta, prose="P")
     issue = client.create_issue(title="t", body=body, user="jonathanmanton",
                                 labels=["agent-task"])
-    # not locked
-    with pytest.raises(PreflightError):
-        submit_mod.submit(
-            client,
-            issue_number=issue["number"], command="echo",
-            args={"message": "x"}, branch="b", commit_sha="0" * 40,
-            subagent_id="alpha", agent_id="A", config=base_config,
-        )
+    sha = client.create_branch("agent/1-demo")
+    # not locked — should still succeed
+    res = submit_mod.submit(
+        client,
+        issue_number=issue["number"], command="echo",
+        args={"message": "x"}, branch="agent/1-demo", commit_sha=sha,
+        subagent_id="alpha", agent_id="A", config=base_config,
+    )
+    assert res["id"]
+    body_json = json.loads(res["body"])
+    assert body_json["kind"] == "batch-job-request"
 
 
 def test_submit_preflight_label_missing(client, base_config):

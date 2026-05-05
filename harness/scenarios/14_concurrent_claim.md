@@ -12,7 +12,7 @@ claim was clobbered and self-abandons.
 ## Setup
 1. `run_id = new_run_id()`; `feature = feature_branch(14, run_id)`.
 2. Create `feature` from `main`. Capture HEAD.
-3. Create + lock + label issue (`harness-scenario-14`). DO NOT claim
+3. Create + label (do NOT lock — locking moved to close_on_merge per SPEC §3) issue (`harness-scenario-14`). DO NOT claim
    yet.
 
 ## Agent steps

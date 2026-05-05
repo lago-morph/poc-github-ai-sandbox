@@ -15,7 +15,7 @@ envelope carrying `error_kind="schema_validation_failed"`.
 2. Create `feature` from `main`. Capture HEAD sha.
 
 ## Agent steps
-1. Create + lock + label parent issue (label `harness-scenario-03`).
+1. Create + label (do NOT lock — locking moved to close_on_merge per SPEC §3) parent issue (label `harness-scenario-03`).
 2. Claim meta and update issue body.
 3. Construct an INTENTIONALLY MALFORMED envelope JSON, e.g.::
 

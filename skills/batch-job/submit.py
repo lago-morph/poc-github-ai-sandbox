@@ -1,8 +1,16 @@
 """``batch-job/submit`` skill script.
 
 Constructs a ``batch-job-request`` envelope and posts it as a comment
-on the issue. Pre-flight: validates that the issue is locked, carries
-the agent-task label, and that args conform to the command schema.
+on the issue. Pre-flight: validates that the issue carries the
+agent-task label and that args conform to the command schema.
+
+Note: the issue is **not** required to be locked at submit time. The
+original draft of the protocol locked agent issues at creation, but
+GitHub refuses comments from ``GITHUB_TOKEN`` on locked issues, which
+breaks the batch-job-handler's terminal envelope writes. Locking is
+therefore deferred to ``close_on_merge`` (post-merge); the
+batch-job-handler's ``if:`` filter (label + author) is what makes
+foreign comments inert.
 
 Importable: :func:`submit` (programmatic) or run as
 ``python -m skills.batch-job.submit`` (not wired up here for the POC).
@@ -57,8 +65,8 @@ def preflight(
     agent_task_label: str = "agent-task",
 ) -> dict[str, Any]:
     issue = client.get_issue(issue_number)
-    if not issue.get("locked"):
-        raise PreflightError(f"issue #{issue_number} is not locked")
+    # Intentionally NOT checking ``issue.get("locked")`` here: locking
+    # is deferred until post-merge (see module docstring).
     labels = {l["name"] for l in (issue.get("labels") or [])}
     if agent_task_label not in labels:
         raise PreflightError(

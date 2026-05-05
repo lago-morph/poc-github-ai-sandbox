@@ -67,9 +67,12 @@ def test_full_happy_lifecycle(client, base_config):
         issue = client.create_issue(title="demo", body=body)
     n = issue["number"]
 
-    # Step 2: lock_and_sweep
+    # Step 2: lock_and_sweep — applies label only; does NOT lock at
+    # creation (locking moved to close_on_merge to avoid blocking the
+    # batch-job-handler's GITHUB_TOKEN comment writes; see SPEC §3).
     res = lock_and_sweep.run(client, n, config=base_config)
-    assert res["action"] == "locked"
+    assert res["action"] == "labeled"
+    assert client.get_issue(n)["locked"] is False
 
     # Step 3: claim (write agent_id and status=working)
     new_meta = dict(meta)

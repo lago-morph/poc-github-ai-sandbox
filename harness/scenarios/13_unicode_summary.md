@@ -12,7 +12,7 @@ exact string after gzip compression and JSON serialisation.
 ## Setup
 1. `run_id = new_run_id()`; `feature = feature_branch(13, run_id)`.
 2. Create `feature` from `main`. Capture HEAD.
-3. Create + lock + label issue (`harness-scenario-13`); claim meta.
+3. Create + label (do NOT lock — locking moved to close_on_merge per SPEC §3) issue (`harness-scenario-13`); claim meta.
 
 ## Agent steps
 1. `MESSAGE = "Hello 世界 🌍 éclair café Ω βγ ✓"`.

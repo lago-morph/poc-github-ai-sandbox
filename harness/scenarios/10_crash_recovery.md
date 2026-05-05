@@ -13,7 +13,7 @@ flow.
 ## Setup
 1. `run_id = new_run_id()`; `feature = feature_branch(10, run_id)`.
 2. Create `feature` from `main`. Capture HEAD.
-3. Create + lock + label issue (`harness-scenario-10`).
+3. Create + label (do NOT lock — locking moved to close_on_merge per SPEC §3) issue (`harness-scenario-10`).
 
 ## Agent steps — primary 1 (crash simulation)
 1. `claim-meta` with `agent_id = "primary-1-<short>"`. Update issue.
