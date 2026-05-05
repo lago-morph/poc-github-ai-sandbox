@@ -139,13 +139,15 @@ def run(
     try:
         cmd_schema = load_schema(cmd_schema_path, repo_root)
     except FileNotFoundError:
-        # No schema file = command not actually implemented; same as unknown.
+        # Command exists in the registry but the schema file is missing —
+        # treat as a more specific terminal error so operators can tell
+        # this case apart from a truly unknown command.
         return _write_terminal_error(
             client=client,
             issue_number=issue_number,
             comment_id=comment_id,
             envelope=parsed,
-            error_kind="unknown_command",
+            error_kind="missing_schema",
             error_detail=f"no schema file for command {command}",
             workflow_run_id=workflow_run_id,
             run_started_at=started_at,
