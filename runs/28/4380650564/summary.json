@@ -1,0 +1,14 @@
+{
+  "summary": {
+    "lines_emitted": 20000,
+    "message": "chatty emitted 20000 lines"
+  },
+  "run_status": "completed",
+  "command": "chatty",
+  "args": {
+    "lines": 20000
+  },
+  "checked_out_sha": "5e9dcfc0a8b2feb8de73ef049c2a0509dc846617",
+  "started_at": "2026-05-05T15:20:43Z",
+  "finished_at": "2026-05-05T15:20:45Z"
+}
