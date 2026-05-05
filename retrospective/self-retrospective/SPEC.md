@@ -141,6 +141,11 @@ What you skipped and *why*. The "why" is the lesson.
 Auth boundaries, identity quirks, rate limits, naming collisions —
 hard-won and should be captured.
 
+### 3.8 Effective or innovative workflows
+Workflows described by the user and/or evolved in conjunction with the agent as the session evolved.
+These can be extremely valuable - lean into packaging instructions by the user so they do not have to repeat themselves in future sessions.
+Make sure to only include workflows that had some benefit.  Experiements that did not work aren't to be included unless it is obvious how to modify them to be useful in the future.
+
 ## 4. What NOT to include
 
 - Step-by-step replay of routine work.
