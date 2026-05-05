@@ -38,7 +38,7 @@ def _seed_locked_issue(client, *, agent_id="A", labels=("agent-task",), prose="P
     meta = make_agent_meta(agent_id=agent_id, status="working",
                            status_ts=common.iso_now())
     body = common.render_agent_meta(meta, prose=prose)
-    issue = client.create_issue(title="t", body=body, user="my-bot",
+    issue = client.create_issue(title="t", body=body, user="jonathanmanton",
                                 labels=list(labels))
     client.lock_issue(issue["number"])
     return client.get_issue(issue["number"]), meta
@@ -77,7 +77,7 @@ def test_submit_builds_envelope_and_posts(client, base_config):
 def test_submit_preflight_unlocked(client, base_config):
     meta = make_agent_meta(agent_id="A")
     body = common.render_agent_meta(meta, prose="P")
-    issue = client.create_issue(title="t", body=body, user="my-bot",
+    issue = client.create_issue(title="t", body=body, user="jonathanmanton",
                                 labels=["agent-task"])
     # not locked
     with pytest.raises(PreflightError):
@@ -92,7 +92,7 @@ def test_submit_preflight_unlocked(client, base_config):
 def test_submit_preflight_label_missing(client, base_config):
     meta = make_agent_meta(agent_id="A")
     body = common.render_agent_meta(meta, prose="P")
-    issue = client.create_issue(title="t", body=body, user="my-bot")
+    issue = client.create_issue(title="t", body=body, user="jonathanmanton")
     client.lock_issue(issue["number"])
     # no agent-task label
     with pytest.raises(PreflightError):

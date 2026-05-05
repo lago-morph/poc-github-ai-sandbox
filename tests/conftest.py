@@ -80,8 +80,8 @@ def fast_poll_config(base_config: dict[str, Any]) -> dict[str, Any]:
 
 @pytest.fixture
 def client() -> Any:
-    """A fresh InMemoryGitHubClient acting as ``my-bot`` by default."""
-    return InMemoryGitHubClient(default_user="my-bot")
+    """A fresh InMemoryGitHubClient acting as ``jonathanmanton`` by default."""
+    return InMemoryGitHubClient(default_user="jonathanmanton")
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +143,7 @@ def seed_agent_issue(
     client: Any,
     *,
     title: str = "Demo task",
-    user: str = "my-bot",
+    user: str = "jonathanmanton",
     locked: bool = False,
     labels: Optional[list[str]] = None,
     meta: Optional[dict[str, Any]] = None,

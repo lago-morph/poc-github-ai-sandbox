@@ -8,7 +8,7 @@ from tests.conftest import make_agent_meta
 import agent_protocol_common as common
 
 
-def _seed(client, *, user="my-bot", with_meta=True, prose="P"):
+def _seed(client, *, user="jonathanmanton", with_meta=True, prose="P"):
     if with_meta:
         body = common.render_agent_meta(make_agent_meta(), prose=prose)
     else:

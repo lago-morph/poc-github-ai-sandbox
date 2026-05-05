@@ -63,7 +63,7 @@ def test_full_happy_lifecycle(client, base_config):
         instructions_inline="Run echo job.",
     )
     body = common.render_agent_meta(meta, prose="Demo")
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         issue = client.create_issue(title="demo", body=body)
     n = issue["number"]
 
@@ -86,7 +86,7 @@ def test_full_happy_lifecycle(client, base_config):
     sha = client.get_branch_head_sha("agent/42-demo")
 
     # Step 4: submit batch-job-request (echo) under the agent identity
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         comment = submit_mod.submit(
             client, issue_number=n, command="echo",
             args={"message": "hello world"},
@@ -145,7 +145,7 @@ def test_e2e_error_recovery_then_retry(client, base_config):
         feature_branch="agent/9-fix", instructions_inline="Fix it.",
     )
     body = common.render_agent_meta(meta, prose="P")
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         issue = client.create_issue(title="fix", body=body)
     n = issue["number"]
     lock_and_sweep.run(client, n, config=base_config)
@@ -162,7 +162,7 @@ def test_e2e_error_recovery_then_retry(client, base_config):
     bad_sha = "0" * 40
 
     # First submit: wrong sha
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         c1 = submit_mod.submit(
             client, issue_number=n, command="echo",
             args={"message": "first"},
@@ -176,7 +176,7 @@ def test_e2e_error_recovery_then_retry(client, base_config):
     assert e1["error_kind"] == "branch_sha_mismatch"
 
     # Second submit: corrected sha
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         c2 = submit_mod.submit(
             client, issue_number=n, command="echo",
             args={"message": "second"},
@@ -207,7 +207,7 @@ def test_e2e_with_subagent_branches(client, base_config):
         instructions_inline="Coordinate multiple subagents.",
     )
     body = common.render_agent_meta(meta, prose="multi")
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         issue = client.create_issue(title="multi", body=body)
     n = issue["number"]
     lock_and_sweep.run(client, n, config=base_config)
@@ -234,7 +234,7 @@ def test_e2e_with_subagent_branches(client, base_config):
     sub_results = {}
     for sub_name, sub_branch in (("alpha", sub_a), ("beta", sub_b)):
         sha = client.get_branch_head_sha(sub_branch)
-        with client.as_user("my-bot"):
+        with client.as_user("jonathanmanton"):
             comment = submit_mod.submit(
                 client, issue_number=n, command="echo",
                 args={"message": f"work-{sub_name}"},
@@ -285,7 +285,7 @@ def test_e2e_unsupported_version_recovery(client, base_config):
         instructions_inline="Resubmit after version error.",
     )
     body = common.render_agent_meta(meta, prose="v")
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         issue = client.create_issue(title="v", body=body)
     n = issue["number"]
     lock_and_sweep.run(client, n, config=base_config)
@@ -314,7 +314,7 @@ def test_e2e_unsupported_version_recovery(client, base_config):
         "run_status": None,
         "agent_ack": None,
     }
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         c1 = client.add_comment(n, json.dumps(bad_envelope, indent=2))
     handler.run(client, n, c1["id"], config=base_config, repo_root=str(REPO_ROOT))
     e1 = json.loads(client.get_comment(c1["id"])["body"])
@@ -323,7 +323,7 @@ def test_e2e_unsupported_version_recovery(client, base_config):
     assert e1["original_body_b64"]
 
     # Agent reads the error, re-submits with protocol_version=1 via submit().
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         c2 = submit_mod.submit(
             client, issue_number=n, command="echo",
             args={"message": "second"},
@@ -350,7 +350,7 @@ def test_e2e_merge_conflict_aborts_pr(client, base_config):
         instructions_inline="Conflict scenario.",
     )
     body = common.render_agent_meta(meta, prose="conflict")
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         issue = client.create_issue(title="conflict", body=body)
     n = issue["number"]
     lock_and_sweep.run(client, n, config=base_config)
@@ -378,7 +378,7 @@ def test_e2e_merge_conflict_aborts_pr(client, base_config):
     # Subagents run their jobs successfully.
     for sub_name, sub_branch in (("alpha", sub_a), ("beta", sub_b)):
         sha = client.get_branch_head_sha(sub_branch)
-        with client.as_user("my-bot"):
+        with client.as_user("jonathanmanton"):
             comment = submit_mod.submit(
                 client, issue_number=n, command="echo",
                 args={"message": f"work-{sub_name}"},
@@ -436,7 +436,7 @@ def test_e2e_runner_failure_path(client, base_config):
         instructions_inline="Will not be picked up.",
     )
     body = common.render_agent_meta(meta, prose="runner")
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         issue = client.create_issue(title="runner-failure-e2e", body=body,
                                      labels=["agent-task"])
     n = issue["number"]
@@ -453,7 +453,7 @@ def test_e2e_runner_failure_path(client, base_config):
     sha = client.create_branch("agent/88-runner")
 
     # Submit batch-job-request — but DO NOT run the handler.
-    with client.as_user("my-bot"):
+    with client.as_user("jonathanmanton"):
         c = submit_mod.submit(
             client, issue_number=n, command="echo",
             args={"message": "no-runner"},

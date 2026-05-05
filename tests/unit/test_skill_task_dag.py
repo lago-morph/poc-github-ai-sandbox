@@ -48,7 +48,7 @@ def _seed_unclaimed(client, *, status=None, agent_id=None, status_ts=None,
     )
     body = common.render_agent_meta(meta, prose="P")
     labels = ["agent-task"] if extra_label else []
-    issue = client.create_issue(title="t", body=body, user="my-bot",
+    issue = client.create_issue(title="t", body=body, user="jonathanmanton",
                                 labels=labels)
     client.lock_issue(issue["number"])
     return client.get_issue(issue["number"]), meta
