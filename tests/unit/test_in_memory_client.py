@@ -84,9 +84,17 @@ def test_create_pull_request(client):
     client.create_branch("main")
     client.put_file_contents("x", b"y", "m", "feat")
     pr = client.create_pull_request(title="T", head="feat", base="main", body="body")
-    assert pr["number"] >= 1
+    # In-memory client's PR numbering starts at 5000 and increments by 1.
+    assert pr["number"] == 5000
     assert pr["head"]["ref"] == "feat"
     assert pr["base"]["ref"] == "main"
+    assert pr["state"] == "open"
+    assert pr["merged"] is False
+
+    # Subsequent create yields the next PR number exactly.
+    client.put_file_contents("y", b"z", "m", "feat2")
+    pr2 = client.create_pull_request(title="T2", head="feat2", base="main", body="b")
+    assert pr2["number"] == 5001
 
 
 def test_get_pull_request_returns_same_pr(client):
@@ -106,3 +114,33 @@ def test_merge_pull_request_marks_merged(client):
     assert merged["merged"] is True
     assert merged["state"] == "closed"
     assert merged["merge_commit_sha"]
+
+
+# ---------------------------------------------------------------------------
+# delete_branch (iter 2 addition)
+# ---------------------------------------------------------------------------
+
+def test_delete_branch_existing(client):
+    client.create_branch("victim")
+    assert client.get_branch_head_sha("victim") is not None
+    client.delete_branch("victim")
+    assert client.get_branch_head_sha("victim") is None
+
+
+def test_delete_branch_idempotent(client):
+    """Deleting a missing branch is a silent no-op (matches GitHub semantics)."""
+    # Never created — should not raise.
+    client.delete_branch("nope")
+    # Create + delete twice in a row — second call is also a no-op.
+    client.create_branch("victim")
+    client.delete_branch("victim")
+    client.delete_branch("victim")
+    assert client.get_branch_head_sha("victim") is None
+
+
+def test_delete_branch_does_not_affect_others(client):
+    client.create_branch("a")
+    client.create_branch("b")
+    client.delete_branch("a")
+    assert client.get_branch_head_sha("a") is None
+    assert client.get_branch_head_sha("b") is not None

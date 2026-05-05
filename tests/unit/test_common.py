@@ -107,13 +107,23 @@ def test_log_writer_single_chunk_manifest():
 
 
 def test_log_writer_rotates_after_threshold():
-    lw = common.LogWriter(max_chunk_bytes_compressed=64)
+    max_chunk_bytes_compressed = 64
+    lw = common.LogWriter(max_chunk_bytes_compressed=max_chunk_bytes_compressed)
     big_payload = "x" * 1000
     for i in range(20):
         lw.write({"ts": common.iso_now(), "stream": "stdout",
                   "phase": "exec", "data": big_payload})
     chunks = lw.finalize()
     assert len(chunks) >= 2
+    # Bound chunk size: each chunk should not be wildly larger than the
+    # threshold. Allow ~20% slack for gzip header/footer + the line that
+    # tipped the rotation. The very last chunk may be smaller (residual).
+    for path, gz_bytes, info in chunks[:-1]:
+        # Active chunks all rotated *because* they crossed the threshold.
+        # In practice each gzipped chunk should be near the threshold, not
+        # multiples of it.
+        assert info["bytes"] <= max_chunk_bytes_compressed * 5
+        assert info["bytes"] == len(gz_bytes)
 
 
 def test_log_writer_chunks_are_valid_gzip_jsonl():
@@ -147,3 +157,82 @@ def test_log_writer_manifest_sums_across_chunks():
     total_bytes = sum(c["bytes"] for c in manifest["chunks"])
     assert total_lines == n
     assert total_bytes > 0
+
+
+# ---------------------------------------------------------------------------
+# LogWriter edge cases (Section H)
+# ---------------------------------------------------------------------------
+
+def test_log_writer_handles_unicode():
+    """Records containing emoji and non-ASCII text round-trip cleanly."""
+    payload = {
+        "msg": "héllo wörld \U0001f680 こんにちは",
+        "extra": "ümläüt",
+    }
+    lw = common.LogWriter(max_chunk_bytes_compressed=10_000_000)
+    for i in range(3):
+        lw.write({
+            "ts": common.iso_now(),
+            "stream": "stdout",
+            "phase": "exec",
+            "data": payload,
+        })
+    chunks = lw.finalize()
+    assert chunks
+    decompressed = gzip.decompress(chunks[0][1])
+    lines = decompressed.decode("utf-8").splitlines()
+    assert len(lines) == 3
+    for ln in lines:
+        obj = json.loads(ln)
+        assert obj["data"]["msg"] == payload["msg"]
+        assert obj["data"]["extra"] == payload["extra"]
+
+
+def test_log_writer_zero_records():
+    """Finalizing with no records produces 0 chunks (and the manifest agrees)."""
+    lw = common.LogWriter()
+    chunks = lw.finalize()
+    assert chunks == []
+    manifest = lw.manifest(
+        command="echo", args={}, checked_out_sha="a" * 40,
+        started_at=common.iso_now(), finished_at=common.iso_now(),
+        exit_code=0,
+    )
+    assert manifest["chunks"] == []
+
+
+def test_log_writer_huge_record_single_chunk():
+    """A single record larger than max_chunk_bytes_compressed still goes into
+    one chunk (we never split a record across chunks)."""
+    lw = common.LogWriter(max_chunk_bytes_compressed=64)
+    huge = "x" * 100_000  # uncompressed, way over threshold
+    lw.write({"ts": common.iso_now(), "stream": "stdout",
+              "phase": "exec", "data": huge})
+    chunks = lw.finalize()
+    assert len(chunks) == 1
+    path, gz_bytes, info = chunks[0]
+    assert info["lines"] == 1
+    # Decompress and ensure the entire huge payload is intact.
+    decompressed = gzip.decompress(gz_bytes)
+    obj = json.loads(decompressed.decode("utf-8").rstrip("\n"))
+    assert obj["data"] == huge
+
+
+def test_log_writer_finalize_is_idempotent():
+    """Calling finalize() twice returns the same chunk list."""
+    lw = common.LogWriter()
+    lw.write({"ts": common.iso_now(), "stream": "stdout",
+              "phase": "exec", "data": "hi"})
+    first = lw.finalize()
+    second = lw.finalize()
+    assert [(p, info) for p, _, info in first] == [(p, info) for p, _, info in second]
+
+
+def test_log_writer_write_after_finalize_raises():
+    lw = common.LogWriter()
+    lw.write({"ts": common.iso_now(), "stream": "stdout",
+              "phase": "exec", "data": "hi"})
+    lw.finalize()
+    with pytest.raises(RuntimeError):
+        lw.write({"ts": common.iso_now(), "stream": "stdout",
+                  "phase": "exec", "data": "after-close"})

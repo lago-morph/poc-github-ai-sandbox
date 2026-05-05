@@ -122,7 +122,7 @@ def test_envelope_schema_violation_writes_parse_error(client, base_config, locke
 
 
 def test_args_schema_violation_yields_parse_or_terminal_error(client, base_config, locked_issue_with_branch):
-    """Per the spec, an args validation failure produces parse_error (impl choice)."""
+    """Per SPEC §5.2.4 args validation IS schema validation: parse_error + schema_validation_failed."""
     fix = locked_issue_with_branch
     env = make_envelope(
         command="run-tests", args={"suite": "not-a-valid-suite"},
@@ -134,8 +134,68 @@ def test_args_schema_violation_yields_parse_or_terminal_error(client, base_confi
         config=base_config, repo_root=str(REPO_ROOT),
     )
     final = json.loads(client.get_comment(cid)["body"])
-    assert res["action"] in ("parse_error", "error")
-    assert final["run_status"] in ("parse_error", "error")
+    assert res["action"] == "parse_error"
+    assert final["run_status"] == "parse_error"
+    assert final["error_kind"] == "schema_validation_failed"
+    assert "original_body_b64" in final and final["original_body_b64"]
+
+
+# ---------------------------------------------------------------------------
+# Protocol version handling (iter 2)
+# ---------------------------------------------------------------------------
+
+def test_unsupported_version_yields_parse_error(client, base_config, locked_issue_with_branch):
+    """Iter 2: ``protocol_version`` other than 1 → parse_error ``unsupported_version``."""
+    fix = locked_issue_with_branch
+    env = make_envelope(
+        command="echo", branch=fix["branch"], commit_sha=fix["sha"],
+    )
+    env["protocol_version"] = 2
+    cid = _post_envelope(client, fix["issue_number"], env)
+    res = handler.run(
+        client, fix["issue_number"], cid,
+        config=base_config, repo_root=str(REPO_ROOT),
+    )
+    assert res["action"] == "parse_error"
+    assert res["error_kind"] == "unsupported_version"
+    final = json.loads(client.get_comment(cid)["body"])
+    assert final["run_status"] == "parse_error"
+    assert final["error_kind"] == "unsupported_version"
+    assert final["original_body_b64"]
+
+
+def test_supported_version_passes_through(client, base_config, locked_issue_with_branch):
+    """Iter 2: ``protocol_version: 1`` is fine; the run proceeds normally."""
+    fix = locked_issue_with_branch
+    env = make_envelope(
+        command="echo", branch=fix["branch"], commit_sha=fix["sha"],
+    )
+    assert env["protocol_version"] == 1
+    cid = _post_envelope(client, fix["issue_number"], env)
+    res = handler.run(
+        client, fix["issue_number"], cid,
+        config=base_config, repo_root=str(REPO_ROOT),
+    )
+    assert res["action"] == "ran"
+    assert res["run_status"] == "completed"
+
+
+def test_short_sha_in_envelope_fails_schema(client, base_config, locked_issue_with_branch):
+    """Envelope schema requires a 40-char lowercase-hex commit_sha."""
+    fix = locked_issue_with_branch
+    env = make_envelope(
+        command="echo", branch=fix["branch"],
+        commit_sha="abcdef1",  # 7 chars, schema requires 40
+    )
+    cid = _post_envelope(client, fix["issue_number"], env)
+    res = handler.run(
+        client, fix["issue_number"], cid,
+        config=base_config, repo_root=str(REPO_ROOT),
+    )
+    assert res["action"] == "parse_error"
+    final = json.loads(client.get_comment(cid)["body"])
+    assert final["run_status"] == "parse_error"
+    assert final["error_kind"] == "schema_validation_failed"
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +265,7 @@ def test_idempotency_already_terminal_noop(client, base_config, locked_issue_wit
 # ---------------------------------------------------------------------------
 
 def test_unknown_command_yields_error(client, base_config, locked_issue_with_branch):
+    """Per iter-2 impl: unknown command is a terminal `error` (not parse_error)."""
     fix = locked_issue_with_branch
     env = make_envelope(
         command="not-a-real-command", args={},
@@ -216,8 +277,10 @@ def test_unknown_command_yields_error(client, base_config, locked_issue_with_bra
         config=base_config, repo_root=str(REPO_ROOT),
     )
     final = json.loads(client.get_comment(cid)["body"])
-    assert res["action"] in ("parse_error", "error")
-    assert final["run_status"] in ("parse_error", "error")
+    assert res["action"] == "error"
+    assert res["error_kind"] == "unknown_command"
+    assert final["run_status"] == "error"
+    assert final["error_kind"] == "unknown_command"
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +312,37 @@ def test_summary_schema_violation_terminal_error(
     assert res["run_status"] == "error"
     assert final["run_status"] == "error"
     assert final["error_kind"] == "summary_schema_violation"
+
+
+def test_command_exception_yields_terminal_error(
+    client, base_config, locked_issue_with_branch, monkeypatch
+):
+    """If the command handler raises, we get a terminal `error` envelope
+    with the exception class name as the error_kind."""
+    fix = locked_issue_with_branch
+
+    class CommandFailed(RuntimeError):
+        pass
+
+    def boom(args, log_writer, workspace):
+        raise CommandFailed("synthetic failure")
+
+    monkeypatch.setattr(handler, "_load_command_handler", lambda command: boom)
+
+    env = make_envelope(
+        command="echo", branch=fix["branch"], commit_sha=fix["sha"],
+    )
+    cid = _post_envelope(client, fix["issue_number"], env)
+    res = handler.run(
+        client, fix["issue_number"], cid,
+        config=base_config, repo_root=str(REPO_ROOT),
+    )
+    final = json.loads(client.get_comment(cid)["body"])
+    assert res["run_status"] == "error"
+    assert final["run_status"] == "error"
+    # exception class name surfaces as error_kind for the surrounding envelope.
+    assert final["error_kind"] == "CommandFailed"
+    assert "synthetic failure" in final["error_detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -286,3 +380,64 @@ def test_manifest_validates_against_schema(client, base_config, locked_issue_wit
     manifest = json.loads(raw)
     schema = common.load_schema("log-manifest.schema.json", REPO_ROOT)
     common.validate(manifest, schema)
+
+
+# ---------------------------------------------------------------------------
+# Workflow guard boundary (Section D)
+#
+# These tests document that handler.run does NOT itself check lock/label/
+# author state — those gates are enforced by the workflow YAML's `if:`
+# expression. The handler trusts its caller; the tests below pin that
+# behavior so a future "tighten in python" decision is a deliberate change.
+# ---------------------------------------------------------------------------
+
+def test_handler_proceeds_on_unlocked_issue(client, base_config, locked_issue_with_branch):
+    """Handler runs even if the issue is not locked — gating is in the YAML."""
+    fix = locked_issue_with_branch
+    # Forcibly un-lock; lock_issue is the only setter, so we mutate state.
+    client._issues[fix["issue_number"]].locked = False
+    assert client.get_issue(fix["issue_number"])["locked"] is False
+
+    env = make_envelope(
+        command="echo", branch=fix["branch"], commit_sha=fix["sha"],
+    )
+    cid = _post_envelope(client, fix["issue_number"], env)
+    res = handler.run(
+        client, fix["issue_number"], cid,
+        config=base_config, repo_root=str(REPO_ROOT),
+    )
+    # Handler does NOT enforce lock; it ran successfully.
+    assert res["action"] == "ran"
+    assert res["run_status"] == "completed"
+
+
+def test_handler_proceeds_when_label_missing(client, base_config, locked_issue_with_branch):
+    """Handler runs even if the agent-task label is missing."""
+    fix = locked_issue_with_branch
+    client._issues[fix["issue_number"]].labels = []
+    env = make_envelope(
+        command="echo", branch=fix["branch"], commit_sha=fix["sha"],
+    )
+    cid = _post_envelope(client, fix["issue_number"], env)
+    res = handler.run(
+        client, fix["issue_number"], cid,
+        config=base_config, repo_root=str(REPO_ROOT),
+    )
+    assert res["action"] == "ran"
+    assert res["run_status"] == "completed"
+
+
+def test_handler_proceeds_when_comment_author_is_random(client, base_config, locked_issue_with_branch):
+    """Handler runs irrespective of comment author; YAML gates that."""
+    fix = locked_issue_with_branch
+    env = make_envelope(
+        command="echo", branch=fix["branch"], commit_sha=fix["sha"],
+    )
+    with client.as_user("some-random-human"):
+        cid = _post_envelope(client, fix["issue_number"], env)
+    res = handler.run(
+        client, fix["issue_number"], cid,
+        config=base_config, repo_root=str(REPO_ROOT),
+    )
+    assert res["action"] == "ran"
+    assert res["run_status"] == "completed"
