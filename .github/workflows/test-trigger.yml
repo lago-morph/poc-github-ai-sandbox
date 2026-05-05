@@ -5,22 +5,63 @@ on:
 permissions:
   contents: read
   issues: write
+  pull-requests: write
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: post-marker
+      - name: dump-context
         run: |
-          echo "event=${{ github.event_name }}"
-          echo "issue_locked=${{ github.event.issue.locked }}"
-          echo "labels=${{ toJson(github.event.issue.labels.*.name) }}"
-          echo "comment_user=${{ github.event.comment.user.login }}"
-          curl -sS -X POST \
+          {
+            echo "## Diagnostic context"
+            echo ""
+            echo "- event_name: ${{ github.event_name }}"
+            echo "- repo: ${{ github.repository }}"
+            echo "- run_id: ${{ github.run_id }}"
+            echo "- issue.number: ${{ github.event.issue.number }}"
+            echo "- issue.locked: ${{ github.event.issue.locked }}"
+            echo "- comment.id: ${{ github.event.comment.id }}"
+            echo "- comment.user.login: ${{ github.event.comment.user.login }}"
+            echo "- actor: ${{ github.actor }}"
+            echo "- triggering_actor: ${{ github.triggering_actor }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: post-marker-curl
+        run: |
+          set -x
+          status=$(curl -sS -X POST \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
-            -d '{"body":"<!-- test-trigger-marker -->\n[test-trigger-fired] run=${{ github.run_id }} comment=${{ github.event.comment.id }} locked=${{ github.event.issue.locked }} user=${{ github.event.comment.user.login }}"}' \
-            -o /tmp/resp.json -w "HTTP_STATUS=%{http_code}\n" || true
-          echo "--- response body ---"
-          cat /tmp/resp.json || true
+            -d '{"body":"<!-- test-trigger-marker -->\n[test-trigger-fired-curl] run=${{ github.run_id }}"}' \
+            -o /tmp/resp.json -w "%{http_code}")
+          echo "HTTP_STATUS=$status"
+          {
+            echo ""
+            echo "## curl POST /comments"
+            echo "- status: $status"
+            echo ""
+            echo '```json'
+            cat /tmp/resp.json || true
+            echo ""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "$status" -ge 200 -a "$status" -lt 300
+      - name: post-marker-action
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const r = await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `<!-- test-trigger-marker -->\n[test-trigger-fired-action] run=${context.runId}`
+              });
+              core.summary.addHeading('actions/github-script createComment').addRaw(`status: ${r.status}, id: ${r.data.id}`).write();
+            } catch (e) {
+              core.summary.addHeading('actions/github-script createComment FAILED').addRaw(`${e.status}: ${e.message}`).write();
+              core.setFailed(`createComment failed: ${e.message}`);
+            }
