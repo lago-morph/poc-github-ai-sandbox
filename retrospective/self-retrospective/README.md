@@ -44,23 +44,54 @@ the agent could offer it proactively when long sessions end.
 
 ## What good looks like
 
-Output is three sections:
+The skill has **two output modes** (see SPEC.md §5):
 
-### Part 1 — narrative
-Phase-by-phase summary. What happened, what was unplanned, key
-decisions, key surprises. Includes a metrics table (subagents
-dispatched, PRs, bugs, tests added).
+### Mode A — chat-only retrospective
+A markdown document delivered in chat. Three sections:
 
-### Part 2 — skill harvest
-A list of skill candidates, each with a uniform shape (purpose,
-trigger, content, anti-patterns, examples). Detailed enough that
-later building from each spec is straightforward.
-
-### Part 3 — repo conventions
-One-line rules, suitable for dropping into AGENTS.md / CLAUDE.md.
-Each rule is grounded in something that went wrong without it.
+- **Part 1 — narrative.** Phase-by-phase summary. What happened,
+  what was unplanned, key decisions, key surprises. Includes a
+  metrics table (subagents dispatched, PRs, bugs, tests added).
+- **Part 2 — skill harvest.** A list of skill candidates, each with
+  a uniform shape (purpose, trigger, content, anti-patterns,
+  examples).
+- **Part 3 — repo conventions.** One-line rules, suitable for
+  dropping into AGENTS.md / CLAUDE.md. Each rule grounded in
+  something that went wrong without it.
 
 Plus: a summary table of all proposed skills with priority + scope.
+
+Best for: review before committing to anything; short sessions;
+small numbers of lessons.
+
+### Mode B — package mode
+A **filesystem package** committed to a feature branch and pushed,
+ready for future skill-build tasks to consume. The deliverable is
+a directory tree:
+
+```
+retrospective/
+  README.md                          # top-level index
+  <skill-name>/
+    README.md                        # human motivation
+    SPEC.md                          # implementation-grade detail
+    excerpts.jsonl                   # session evidence (when valuable)
+    examples/                        # concrete templates (when valuable)
+  agents-md-template/                # special: spec for AGENTS.md edits
+```
+
+Each skill's README.md captures **why** (importance, when this would
+have helped, the value statement). Each SPEC.md captures **how** to
+build it later. `excerpts.jsonl` preserves session-specific evidence
+(exact error messages, fixes, quotes). The package is **specs only,
+not implementations** — building each skill is a follow-up task.
+
+Best for: long sessions with many lessons; when each skill should
+be a separate later build task; when the user wants the lessons
+captured durably on disk rather than in chat.
+
+This very `retrospective/` directory is the canonical example of
+mode B.
 
 ## When to use this vs the agent-dispatch-loop's exit step
 

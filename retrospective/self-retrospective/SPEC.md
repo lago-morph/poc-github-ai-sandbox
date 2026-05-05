@@ -151,18 +151,189 @@ hard-won and should be captured.
 
 ## 5. Output deliverable
 
-By default the skill produces:
+The skill supports **two deliverable modes**. Pick based on user
+intent — and ASK if it's not obvious.
 
-- A **markdown document** with the three-part structure and the
-  summary table.
-- Optionally: a **directory tree** like the one this session
-  produced (`retrospective/<skill-name>/{README,SPEC}.md` plus
-  excerpts), if the user wants a full implementation-grade package.
+### 5.1 Mode A — chat-only retrospective (the default)
 
-The skill should ASK which output the user wants:
+A markdown document delivered inline in the chat, with the three-part
+structure and the final summary table. Best when:
 
-> "Do you want a chat-only retrospective, or should I write a full
-> `retrospective/` directory with per-skill packages?"
+- The user wants to **review** the lessons before deciding what to
+  do with them.
+- The session was short or the lessons are few.
+- The user explicitly asks for "a retrospective" without mentioning
+  files or branches.
+
+Cap output at ~5000 words. If more is needed, recommend mode B.
+
+### 5.2 Mode B — package mode (the implementation-grade deliverable)
+
+A **filesystem package** committed to a feature branch and pushed,
+ready for future skill-build tasks to consume. Best when:
+
+- The user says things like "create a feature branch", "package these
+  for later", "create specs and READMEs", "I want to capture this
+  for later implementation."
+- The session was long and lessons are many (5+ skills).
+- The user wants to dispatch each skill build as a separate task
+  later.
+
+#### Recipe for mode B (the explicit steps)
+
+1. **Create a feature branch.**
+   ```bash
+   git checkout -b feat/retrospective-skill-specs
+   ```
+   (or similar). Don't reuse the working branch — this is a clean
+   deliverable, separate from in-flight work.
+
+2. **Create the directory tree.** At the repo root:
+   ```
+   retrospective/
+     README.md                            # top-level index
+     <skill-name-1>/
+       README.md                          # human motivation
+       SPEC.md                            # implementation-grade detail
+       excerpts.jsonl                     # session evidence (optional)
+       examples/                          # concrete templates (optional)
+     <skill-name-2>/
+       ...
+     agents-md-template/                  # special: spec for AGENTS.md edits
+       README.md
+       SPEC.md
+   ```
+
+3. **Top-level `retrospective/README.md`** has:
+   - Why the directory exists (paragraph or two — capture the
+     "long sessions accumulate value, harvest before compacted"
+     intent)
+   - The skill-index table (priority + one-line summary per skill,
+     with links)
+   - A "How to consume this package" section telling future tasks
+     how to use the spec to build the skill
+
+4. **For each skill, the per-subdirectory contents:**
+
+   **`README.md`** (human-readable motivation — this is the
+   stakeholder-facing doc):
+   - **Why this skill matters** — the pain it removes, ideally with
+     concrete numbers ("saved ~2 hours of debug time")
+   - **When this would have helped (in this session)** — at least
+     one concrete example from the session where the skill would
+     have been valuable. Reference specific PRs, scenarios,
+     subagent dispatches.
+   - **What good looks like** — narrative description of the skill
+     in action ("user says X, skill outputs Y")
+   - **Cousins** — other skills it composes with
+   - **Status** — "Spec only — see SPEC.md. No code yet."
+
+   **`SPEC.md`** (implementation-grade detail — the input for a
+   future builder agent):
+   - **Trigger conditions** (when the skill activates) with
+     positive triggers AND negative triggers (when NOT to fire)
+   - **Inputs** (parameters, defaults, configuration)
+   - **Outputs** (what the skill produces)
+   - **Workflow steps** or **core content** (the substance)
+   - **Templates** for any prompts, briefs, or generated artifacts
+   - **Anti-patterns** (what NOT to do, ideally with session
+     examples of the anti-pattern surfacing)
+   - **Implementation notes** for the builder (suggested file
+     layout, dependencies, integration points)
+   - **Test plan** (how to validate the skill works, when built)
+   - **Living document** note (skills evolve as new patterns
+     emerge)
+   - **References** (back to ITERATION_REPORT.md or the session's
+     evidence)
+
+   **`excerpts.jsonl`** (when valuable):
+   - JSONL format — one record per line.
+   - Each record has at minimum: `id`, `kind`, `phase`,
+     `demonstration`, plus skill-specific fields like `evidence_raw`,
+     `fix`, `lesson`.
+   - Include the actual error messages, the actual fix code, the
+     actual user quote that motivated the skill — not paraphrases.
+   - The SPEC.md should mention the `excerpts.jsonl` exists, what
+     it contains, and how a future builder should use it (usually:
+     "test the skill against these recorded scenarios").
+
+   **`examples/`** (when valuable):
+   - Concrete templates: good-vs-bad prompts, sample YAML snippets,
+     reference output formats.
+   - Each example file has its own narrative explaining why it's
+     a good (or bad) example.
+
+5. **`agents-md-template/` is special.** It's not a skill spec; it's
+   a spec for repo-level convention additions. Its SPEC.md
+   enumerates rules (with do/don't, "why" grounded in failure, and
+   "see also" links to skills). Its README explains why these
+   conventions are high-leverage.
+
+6. **Tone for both README and SPEC:**
+   - **Lots of intent.** "This is why this is important" — make the
+     case for the skill at every level. "This is when this would
+     have helped" — concrete situations from the session. "Doing
+     this will help in this way" — explicit value statements.
+   - Honest about the reasons. If the skill exists because you
+     wasted 90 minutes debugging something, say so. The pain is
+     the motivation.
+   - Future-builder-friendly. Imagine a fresh subagent receiving
+     just `SPEC.md` as their brief. Can they build the skill? If
+     not, the spec is too thin.
+
+7. **DO NOT implement the skills in this branch.** The package is
+   a *deliverable for later tasks*. Mixing the spec branch with
+   actual skill code creates merge headaches and conflates two
+   purposes. State explicitly in each skill's README: "Spec only.
+   No code yet."
+
+8. **Commit and push.** One commit, descriptive message:
+   ```
+   docs: retrospective skill specs — N skills + AGENTS.md template
+
+   Captures session-wide lessons as self-contained spec packages.
+   Each skill has README (motivation) + SPEC (impl detail) +
+   excerpts/examples where useful.
+
+   Skills (priority order):
+   - <skill-1> (high)
+   - <skill-2> (high)
+   ...
+
+   No skills implemented in this branch. Each SPEC.md is self-
+   contained enough to dispatch a future build task with that
+   file as the brief.
+   ```
+
+9. **Open a PR.** Body summarizes the index table, what's in /
+   what's not in. Don't merge unless the user requests it — the
+   user's review of the package is part of the value.
+
+#### Quality bar for mode B
+
+A "good" package is one where:
+
+- Each `SPEC.md` is detailed enough that a future builder agent,
+  given just that file as a brief, can produce the skill without
+  needing the original session.
+- Each `README.md` makes the case clearly enough that a stakeholder
+  can decide whether to fund the build without reading the SPEC.
+- The session's specific failures, fixes, and quotes appear in
+  `excerpts.jsonl` files — preserved verbatim, not paraphrased.
+- Cross-references between skills work (see-also links resolve to
+  real files in the package).
+- The top-level `README.md` index lets a future planner pick which
+  skills to build first based on priority + scope.
+
+Total target size: 25-50 files, 3000-6000 lines of markdown,
+depending on how rich the session was.
+
+#### When NOT to use mode B
+
+- Routine sessions with 1-2 lessons. A chat-only summary is
+  sufficient.
+- User explicitly wants the lessons in chat.
+- User explicitly wants implementation, not specs.
 
 ## 6. Tone
 
