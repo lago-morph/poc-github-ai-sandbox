@@ -1,0 +1,26 @@
+name: test-trigger
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  contents: read
+  issues: write
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: post-marker
+        run: |
+          echo "event=${{ github.event_name }}"
+          echo "issue_locked=${{ github.event.issue.locked }}"
+          echo "labels=${{ toJson(github.event.issue.labels.*.name) }}"
+          echo "comment_user=${{ github.event.comment.user.login }}"
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments" \
+            -d '{"body":"<!-- test-trigger-marker -->\n[test-trigger-fired] run=${{ github.run_id }} comment=${{ github.event.comment.id }} locked=${{ github.event.issue.locked }} user=${{ github.event.comment.user.login }}"}' \
+            -o /tmp/resp.json -w "HTTP_STATUS=%{http_code}\n" || true
+          echo "--- response body ---"
+          cat /tmp/resp.json || true
