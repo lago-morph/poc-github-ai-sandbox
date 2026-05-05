@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "echoed_args": {
+      "message": "scenario 01 fresh \u2014 lock removed"
+    },
+    "message": "scenario 01 fresh \u2014 lock removed"
+  },
+  "run_status": "completed",
+  "command": "echo",
+  "args": {
+    "message": "scenario 01 fresh \u2014 lock removed"
+  },
+  "checked_out_sha": "11ddda314efbbe1ee8a35aa3e394d172d8676e5a",
+  "started_at": "2026-05-05T14:55:29Z",
+  "finished_at": "2026-05-05T14:55:30Z"
+}
