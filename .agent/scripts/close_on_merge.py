@@ -94,30 +94,58 @@ def run(
 
 
 def main() -> int:
-    """POC stub for the ``close-on-merge`` workflow entry point.
+    """``close-on-merge`` workflow entry point.
 
     Required environment variables:
       - ``PR_NUMBER``          the merged pull request number
-      - ``GITHUB_TOKEN``       token authenticating REST calls
+      - ``GH_TOKEN`` / ``GITHUB_TOKEN``  REST API token
       - ``GITHUB_REPOSITORY``  ``owner/repo`` slug
 
-    Exits 0 (POC stub successfully reached). Tests call ``run()`` directly
-    with an in-memory client; real workflow integration will instantiate
-    a REST-backed ``GitHubClient`` here.
+    On success exits 0; on uncaught exception prints to stderr and
+    exits 1. Tests call :func:`run` directly with an in-memory client.
     """
     required = ["PR_NUMBER", "GITHUB_TOKEN", "GITHUB_REPOSITORY"]
-    missing = [k for k in required if not os.environ.get(k)]
     print(
-        "close_on_merge: POC stub. Required env vars: " + ", ".join(required) + ".",
+        "close_on_merge: required env vars: " + ", ".join(required) + ".",
         file=sys.stderr,
     )
+    pr_number = os.environ.get("PR_NUMBER")
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    repo_slug = os.environ.get("GITHUB_REPOSITORY")
+    missing = [
+        name for name, val in (
+            ("PR_NUMBER", pr_number),
+            ("GITHUB_TOKEN", token),
+            ("GITHUB_REPOSITORY", repo_slug),
+        ) if not val
+    ]
     if missing:
-        print(f"close_on_merge: missing env vars (POC stub, exit 0 anyway): {missing}", file=sys.stderr)
-    else:
+        print(f"close_on_merge: missing env vars: {missing}", file=sys.stderr)
+        return 1
+    assert pr_number is not None and token is not None and repo_slug is not None
+    if "/" not in repo_slug:
         print(
-            f"close_on_merge: would handle PR #{os.environ['PR_NUMBER']}",
+            f"close_on_merge: GITHUB_REPOSITORY must be 'owner/repo', got: {repo_slug!r}",
             file=sys.stderr,
         )
+        return 1
+    owner, repo = repo_slug.split("/", 1)
+    print(
+        f"close_on_merge: handling PR #{pr_number}",
+        file=sys.stderr,
+    )
+    try:
+        if __package__ in (None, ""):
+            from rest_client import RestGitHubClient  # type: ignore[import-not-found]
+        else:
+            from .rest_client import RestGitHubClient
+        client = RestGitHubClient(token=token, owner=owner, repo=repo)
+        run(client, int(pr_number))
+    except Exception as exc:  # noqa: BLE001
+        import traceback as _tb
+        print(f"close_on_merge: uncaught exception: {exc!r}", file=sys.stderr)
+        _tb.print_exc()
+        return 1
     return 0
 
 

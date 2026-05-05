@@ -85,35 +85,68 @@ def run(
 
 
 def main() -> int:
-    """POC stub for the ``lock-and-sweep`` workflow entry point.
+    """``lock-and-sweep`` workflow entry point.
 
     Required environment variables:
       - ``ISSUE_NUMBER``       the issue that just opened
-      - ``GITHUB_TOKEN``       token authenticating REST calls
+      - ``GH_TOKEN`` / ``GITHUB_TOKEN``  REST API token
       - ``GITHUB_REPOSITORY``  ``owner/repo`` slug
     Optional:
       - ``AGENT_LOGIN``        override the login from ``.agent/config.json``
       - ``AGENT_TASK_LABEL``   override the label from ``.agent/config.json``
 
-    Exits 0 (POC stub successfully reached). Tests call ``run()`` directly
-    with an in-memory client; real workflow integration will instantiate
-    a REST-backed ``GitHubClient`` here.
+    On success exits 0; on uncaught exception prints to stderr and
+    exits 1. Tests call :func:`run` directly with an in-memory client.
     """
     required = ["ISSUE_NUMBER", "GITHUB_TOKEN", "GITHUB_REPOSITORY"]
-    missing = [k for k in required if not os.environ.get(k)]
     print(
-        "lock_and_sweep: POC stub. Required env vars: "
+        "lock_and_sweep: required env vars: "
         + ", ".join(required)
         + ". Optional: AGENT_LOGIN, AGENT_TASK_LABEL.",
         file=sys.stderr,
     )
+    issue_number = os.environ.get("ISSUE_NUMBER")
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    repo_slug = os.environ.get("GITHUB_REPOSITORY")
+    missing = [
+        name for name, val in (
+            ("ISSUE_NUMBER", issue_number),
+            ("GITHUB_TOKEN", token),
+            ("GITHUB_REPOSITORY", repo_slug),
+        ) if not val
+    ]
     if missing:
-        print(f"lock_and_sweep: missing env vars (POC stub, exit 0 anyway): {missing}", file=sys.stderr)
-    else:
+        print(f"lock_and_sweep: missing env vars: {missing}", file=sys.stderr)
+        return 1
+    assert issue_number is not None and token is not None and repo_slug is not None
+    if "/" not in repo_slug:
         print(
-            f"lock_and_sweep: would process issue #{os.environ['ISSUE_NUMBER']}",
+            f"lock_and_sweep: GITHUB_REPOSITORY must be 'owner/repo', got: {repo_slug!r}",
             file=sys.stderr,
         )
+        return 1
+    owner, repo = repo_slug.split("/", 1)
+    print(
+        f"lock_and_sweep: processing issue #{issue_number}",
+        file=sys.stderr,
+    )
+    try:
+        if __package__ in (None, ""):
+            from rest_client import RestGitHubClient  # type: ignore[import-not-found]
+        else:
+            from .rest_client import RestGitHubClient
+        client = RestGitHubClient(token=token, owner=owner, repo=repo)
+        run(
+            client,
+            int(issue_number),
+            agent_login=os.environ.get("AGENT_LOGIN") or None,
+            agent_task_label=os.environ.get("AGENT_TASK_LABEL") or None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        import traceback as _tb
+        print(f"lock_and_sweep: uncaught exception: {exc!r}", file=sys.stderr)
+        _tb.print_exc()
+        return 1
     return 0
 
 

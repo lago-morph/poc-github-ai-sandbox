@@ -447,37 +447,84 @@ def _write_terminal_error(
 
 
 def main() -> int:
-    """POC stub for the ``batch-job-handler`` workflow entry point.
+    """``batch-job-handler`` workflow entry point.
 
-    Required environment variables (consumed by ``run()`` once a real
-    REST-backed ``GitHubClient`` is wired in):
-      - ``ISSUE_NUMBER``   the issue carrying the request comment
-      - ``COMMENT_ID``     the comment id holding the envelope
-      - ``GITHUB_TOKEN``   token authenticating REST calls
+    Required environment variables:
+      - ``ISSUE_NUMBER``       issue carrying the request comment
+      - ``COMMENT_ID``         comment id holding the envelope
+      - ``GH_TOKEN`` / ``GITHUB_TOKEN``  REST API token
       - ``GITHUB_REPOSITORY``  ``owner/repo`` slug
     Optional:
-      - ``WORKFLOW_RUN_ID``  echoed into the running envelope (default 0)
-      - ``GITHUB_WORKSPACE`` checkout root passed to command handlers
+      - ``GITHUB_RUN_ID`` / ``WORKFLOW_RUN_ID``  workflow run id echoed
+        into the running envelope (default ``0``)
+      - ``GITHUB_WORKSPACE``   checkout root passed to command handlers
 
-    Exits 0 (POC stub successfully reached). When an actual REST client
-    lands, this function will instantiate it and call ``run()``.
+    On success exits 0; on uncaught exception prints to stderr and
+    exits 1. Tests call :func:`run` directly with an in-memory client.
     """
     required = ["ISSUE_NUMBER", "COMMENT_ID", "GITHUB_TOKEN", "GITHUB_REPOSITORY"]
-    missing = [k for k in required if not os.environ.get(k)]
     print(
-        "handler: POC stub. Required env vars: "
+        "handler: required env vars: "
         + ", ".join(required)
-        + ". Optional: WORKFLOW_RUN_ID, GITHUB_WORKSPACE.",
+        + ". Optional: GITHUB_RUN_ID, GITHUB_WORKSPACE.",
         file=sys.stderr,
     )
+    issue_number = os.environ.get("ISSUE_NUMBER")
+    comment_id = os.environ.get("COMMENT_ID")
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    repo_slug = os.environ.get("GITHUB_REPOSITORY")
+    missing = [
+        name for name, val in (
+            ("ISSUE_NUMBER", issue_number),
+            ("COMMENT_ID", comment_id),
+            ("GITHUB_TOKEN", token),
+            ("GITHUB_REPOSITORY", repo_slug),
+        ) if not val
+    ]
     if missing:
-        print(f"handler: missing env vars (POC stub, exit 0 anyway): {missing}", file=sys.stderr)
-    else:
+        print(f"handler: missing env vars: {missing}", file=sys.stderr)
+        return 1
+    assert issue_number is not None and comment_id is not None
+    assert token is not None and repo_slug is not None
+    if "/" not in repo_slug:
         print(
-            "handler: would dispatch issue "
-            f"#{os.environ['ISSUE_NUMBER']} comment {os.environ['COMMENT_ID']}",
+            f"handler: GITHUB_REPOSITORY must be 'owner/repo', got: {repo_slug!r}",
             file=sys.stderr,
         )
+        return 1
+    owner, repo = repo_slug.split("/", 1)
+    workflow_run_id_str = (
+        os.environ.get("GITHUB_RUN_ID") or os.environ.get("WORKFLOW_RUN_ID") or "0"
+    )
+    try:
+        workflow_run_id = int(workflow_run_id_str)
+    except ValueError:
+        workflow_run_id = 0
+    workspace = os.environ.get("GITHUB_WORKSPACE")
+    print(
+        "handler: dispatching issue "
+        f"#{issue_number} comment {comment_id}",
+        file=sys.stderr,
+    )
+    try:
+        # Imported lazily so this script remains usable even if requests
+        # is missing (e.g. when only run() is invoked from tests).
+        if __package__ in (None, ""):
+            from rest_client import RestGitHubClient  # type: ignore[import-not-found]
+        else:
+            from .rest_client import RestGitHubClient
+        client = RestGitHubClient(token=token, owner=owner, repo=repo)
+        run(
+            client,
+            int(issue_number),
+            int(comment_id),
+            workflow_run_id=workflow_run_id,
+            workspace=workspace,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"handler: uncaught exception: {exc!r}", file=sys.stderr)
+        traceback.print_exc()
+        return 1
     return 0
 
 
