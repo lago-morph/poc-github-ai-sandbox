@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "echoed_args": {
+      "message": "hello from alpha"
+    },
+    "message": "hello from alpha"
+  },
+  "run_status": "completed",
+  "command": "echo",
+  "args": {
+    "message": "hello from alpha"
+  },
+  "checked_out_sha": "5031385f9e13439d92a65cab1edcc6d1cff9bb67",
+  "started_at": "2026-05-05T15:19:31Z",
+  "finished_at": "2026-05-05T15:19:32Z"
+}
