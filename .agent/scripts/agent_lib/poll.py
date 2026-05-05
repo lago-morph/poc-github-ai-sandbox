@@ -1,0 +1,75 @@
+"""Helpers for parsing terminal-status comments.
+
+Polling itself is performed by the agent via repeated MCP calls; the
+helpers here just classify a comment body and tell the agent what
+``summary.json`` path to read once the comment has reached a terminal
+state.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Optional
+
+from ._common_loader import load_common
+
+
+_common = load_common()
+
+
+_TERMINAL_STATUSES = {"completed", "error", "parse_error"}
+
+
+def parse_terminal_status(
+    envelope_json: str,
+) -> tuple[Optional[str], dict[str, Any]]:
+    """Classify a comment body.
+
+    Returns a tuple ``(run_status, parsed)``:
+      - On JSON parse failure: returns ``(None, {})``.
+      - On non-terminal envelope (run_status=None or "running"): returns
+        ``(None, parsed)``.
+      - On terminal envelope: returns ``(run_status, parsed)``.
+
+    The caller is expected to use the parsed envelope to look up the
+    summary path via :func:`summary_path_for` when terminal.
+    """
+    if not isinstance(envelope_json, str):
+        raise TypeError("envelope_json must be a string")
+    try:
+        parsed = json.loads(envelope_json)
+    except (json.JSONDecodeError, ValueError):
+        return None, {}
+    if not isinstance(parsed, dict):
+        return None, {}
+    status = parsed.get("run_status")
+    if status in _TERMINAL_STATUSES:
+        return status, parsed
+    return None, parsed
+
+
+def summary_path_for(issue_number: int, comment_id: int) -> str:
+    """Return the ``summary.json`` path under the ``_agent_runs`` branch."""
+    if not isinstance(issue_number, int) or issue_number < 1:
+        raise ValueError("issue_number must be a positive integer")
+    if not isinstance(comment_id, int) or comment_id < 1:
+        raise ValueError("comment_id must be a positive integer")
+    return f"runs/{issue_number}/{comment_id}/summary.json"
+
+
+def manifest_path_for(issue_number: int, comment_id: int) -> str:
+    """Return the ``manifest.json`` path under the ``_agent_runs`` branch."""
+    return f"runs/{issue_number}/{comment_id}/manifest.json"
+
+
+def is_terminal(envelope: dict[str, Any]) -> bool:
+    """True if the envelope's ``run_status`` is terminal."""
+    return _common.is_terminal_run_status(envelope.get("run_status"))
+
+
+__all__ = [
+    "parse_terminal_status",
+    "summary_path_for",
+    "manifest_path_for",
+    "is_terminal",
+]

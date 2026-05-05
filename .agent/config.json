@@ -27,5 +27,5 @@
     "feature_pattern": "agent/<issue>-<slug>",
     "subagent_pattern": "<feature_branch>/sub-<subagent_id>"
   },
-  "commands": ["run-tests", "build", "echo"]
+  "commands": ["run-tests", "build", "echo", "bad-summary", "chatty"]
 }
