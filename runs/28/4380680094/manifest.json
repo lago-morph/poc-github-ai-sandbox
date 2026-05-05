@@ -1,0 +1,52 @@
+{
+  "protocol_version": 1,
+  "schema": {
+    "chunk_format": "jsonl-gz",
+    "fields": {
+      "ts": {
+        "type": "string",
+        "description": "ISO 8601"
+      },
+      "stream": {
+        "enum": [
+          "stdout",
+          "stderr",
+          "meta"
+        ]
+      },
+      "phase": {
+        "enum": [
+          "setup",
+          "exec",
+          "teardown"
+        ]
+      },
+      "data": {
+        "type": [
+          "string",
+          "object"
+        ]
+      }
+    }
+  },
+  "command": "chatty",
+  "args": {
+    "lines": 60000
+  },
+  "checked_out_sha": "5e9dcfc0a8b2feb8de73ef049c2a0509dc846617",
+  "started_at": "2026-05-05T15:24:30Z",
+  "finished_at": "2026-05-05T15:24:32Z",
+  "exit_code": 0,
+  "chunks": [
+    {
+      "path": "log-0001.jsonl.gz",
+      "bytes": 524308,
+      "lines": 43637
+    },
+    {
+      "path": "log-0002.jsonl.gz",
+      "bytes": 196715,
+      "lines": 16363
+    }
+  ]
+}
