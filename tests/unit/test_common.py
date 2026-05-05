@@ -82,7 +82,7 @@ def test_iso_now_format():
 def test_load_config_reads_default_file(repo_root_path):
     cfg = common.load_config(repo_root_path / ".agent" / "config.json")
     assert cfg["protocol_version"] == 1
-    assert cfg["agent_login"] == "my-bot"
+    assert cfg["agent_login"] == "jonathanmanton"
     assert "echo" in cfg["commands"]
 
 

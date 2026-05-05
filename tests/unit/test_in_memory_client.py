@@ -157,7 +157,7 @@ def test_in_memory_create_issue_returns_dict_with_number():
     import agent_protocol_common as common
     from tests.conftest import make_agent_meta
 
-    c = common.InMemoryGitHubClient(default_user="my-bot")
+    c = common.InMemoryGitHubClient(default_user="jonathanmanton")
     meta = make_agent_meta(
         feature_branch="agent/42-x",
         instructions_inline="Investigate runner failure.",

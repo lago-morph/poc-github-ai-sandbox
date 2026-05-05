@@ -11,7 +11,7 @@ import agent_protocol_common as common
 def _make_finished_issue(client, status="finished"):
     meta = make_agent_meta(status=status, status_ts=common.iso_now())
     body = common.render_agent_meta(meta, prose="x")
-    issue = client.create_issue(title="t", body=body, user="my-bot",
+    issue = client.create_issue(title="t", body=body, user="jonathanmanton",
                                 labels=["agent-task"])
     return issue
 
@@ -77,7 +77,7 @@ def test_skipped_when_issue_missing(client, base_config):
 def test_skipped_when_issue_has_no_agent_meta(client, base_config):
     """Closes #N for an issue with no agent-meta → skipped with no_agent_meta."""
     issue = client.create_issue(title="plain", body="Just text, no meta block.",
-                                 user="my-bot")
+                                 user="jonathanmanton")
     pr = _make_merged_pr(client, body=f"Closes #{issue['number']}")
     res = close_on_merge.run(client, pr["number"], config=base_config)
     assert res["action"] == "closed"
