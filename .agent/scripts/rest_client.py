@@ -464,6 +464,35 @@ class RestGitHubClient:
         if resp.status_code not in (200, 204, 404):
             resp.raise_for_status()
 
+    def list_branches(self) -> list[dict[str, Any]]:
+        """List branches in the repo, paginated.
+
+        Returns a list of ``{"name": str, "sha": str, "protected": bool}``
+        entries built from the REST ``GET /repos/{owner}/{repo}/branches``
+        response. Pagination follows the ``Link: rel="next"`` header.
+        """
+        out: list[dict[str, Any]] = []
+        path = f"{self._repo_path}/branches"
+        params: Optional[dict[str, Any]] = {"per_page": 100}
+        while True:
+            resp = self._request("GET", path, params=params)
+            page = resp.json() or []
+            for b in page:
+                if not isinstance(b, dict):
+                    continue
+                commit = b.get("commit") or {}
+                out.append({
+                    "name": b.get("name"),
+                    "sha": commit.get("sha"),
+                    "protected": bool(b.get("protected", False)),
+                })
+            next_url = _next_link(resp.headers.get("Link", ""))
+            if not next_url:
+                break
+            path = next_url
+            params = None
+        return out
+
     # ------------------------------------------------------------------
     # PR API
     # ------------------------------------------------------------------
