@@ -183,3 +183,150 @@ def test_e2e_error_recovery_then_retry(client, base_config):
     e2 = json.loads(client.get_comment(c2["id"])["body"])
     assert e2["run_status"] == "completed"
     assert e2["summary"]["message"] == "second"
+
+
+# ---------------------------------------------------------------------------
+# Iter 2 e2e expansion (Section G)
+# ---------------------------------------------------------------------------
+
+merge_mod = _load(
+    "skills_taskdag_merge", REPO_ROOT / "skills" / "task-dag" / "merge.py"
+)
+
+
+def test_e2e_with_subagent_branches(client, base_config):
+    """Primary spawns 2 subagent branches, each posts a job, primary merges,
+    opens PR, finishes — full subagent lifecycle."""
+    meta = make_agent_meta(
+        feature_branch="agent/77-multi",
+        instructions_inline="Coordinate multiple subagents.",
+    )
+    body = common.render_agent_meta(meta, prose="multi")
+    with client.as_user("my-bot"):
+        issue = client.create_issue(title="multi", body=body)
+    n = issue["number"]
+    lock_and_sweep.run(client, n, config=base_config)
+
+    # Claim
+    new_meta = dict(meta)
+    new_meta.update({
+        "agent_id": "primary-multi", "status": "working",
+        "session_id": "s-multi", "status_ts": common.iso_now(),
+    })
+    client.update_issue(n, body=common.render_agent_meta(new_meta, prose="multi"))
+
+    # Set up base + feature + 2 subagent branches.
+    client.create_branch("main")
+    client.create_branch("agent/77-multi", from_branch="main")
+    sub_a = "agent/77-multi/sub-alpha"
+    sub_b = "agent/77-multi/sub-beta"
+    client.create_branch(sub_a, from_branch="agent/77-multi")
+    client.commit_files(sub_a, {"alpha.txt": b"alpha-data"}, "alpha")
+    client.create_branch(sub_b, from_branch="agent/77-multi")
+    client.commit_files(sub_b, {"beta.txt": b"beta-data"}, "beta")
+
+    # Each subagent posts a job comment that the handler runs.
+    sub_results = {}
+    for sub_name, sub_branch in (("alpha", sub_a), ("beta", sub_b)):
+        sha = client.get_branch_head_sha(sub_branch)
+        with client.as_user("my-bot"):
+            comment = submit_mod.submit(
+                client, issue_number=n, command="echo",
+                args={"message": f"work-{sub_name}"},
+                branch=sub_branch, commit_sha=sha,
+                subagent_id=sub_name, agent_id="primary-multi",
+                config=base_config,
+            )
+        handler.run(client, n, comment["id"], config=base_config, repo_root=str(REPO_ROOT))
+        env = json.loads(client.get_comment(comment["id"])["body"])
+        assert env["run_status"] == "completed"
+        sub_results[sub_name] = env
+
+    # Primary merges the subagent branches into the feature branch.
+    merge_res = merge_mod.merge_subagent_branches(
+        client, feature_branch="agent/77-multi",
+        subagent_branches=[sub_a, sub_b],
+    )
+    assert len(merge_res["merged"]) == 2
+    assert sorted(merge_res["deleted"]) == sorted([sub_a, sub_b])
+    assert client.get_file_bytes("alpha.txt", "agent/77-multi") == b"alpha-data"
+    assert client.get_file_bytes("beta.txt", "agent/77-multi") == b"beta-data"
+
+    # Subagent branches are gone after the merge.
+    assert client.get_branch_head_sha(sub_a) is None
+    assert client.get_branch_head_sha(sub_b) is None
+
+    # Open PR + finish.
+    pr = client.create_pull_request(
+        title="multi", head="agent/77-multi", base="main",
+        body=f"Closes #{n}\nMulti subagent run.",
+    )
+    final_meta = common.parse_agent_meta(client.get_issue(n)["body"])
+    final_meta["status"] = "finished"
+    final_meta["status_ts"] = common.iso_now()
+    client.update_issue(n, body=common.render_agent_meta(final_meta, prose="multi"))
+    client.update_issue(n, state="closed")
+    client.merge_pull_request(pr["number"])
+    res = close_on_merge.run(client, pr["number"], config=base_config)
+    assert res["action"] == "closed"
+    assert n in res["issues_closed"]
+
+
+def test_e2e_unsupported_version_recovery(client, base_config):
+    """Submit an envelope with protocol_version=2; handler reports parse_error
+    with error_kind=unsupported_version; agent then resubmits as v1 and runs."""
+    meta = make_agent_meta(
+        feature_branch="agent/13-ver",
+        instructions_inline="Resubmit after version error.",
+    )
+    body = common.render_agent_meta(meta, prose="v")
+    with client.as_user("my-bot"):
+        issue = client.create_issue(title="v", body=body)
+    n = issue["number"]
+    lock_and_sweep.run(client, n, config=base_config)
+
+    new_meta = dict(meta)
+    new_meta.update({
+        "agent_id": "primary-ver", "status": "working",
+        "session_id": "s", "status_ts": common.iso_now(),
+    })
+    client.update_issue(n, body=common.render_agent_meta(new_meta, prose="v"))
+
+    client.create_branch("main")
+    sha = client.create_branch("agent/13-ver")
+
+    # First submit — bad protocol_version — bypass submit() (which uses v1)
+    # and post the comment directly.
+    bad_envelope = {
+        "protocol_version": 2,
+        "kind": "batch-job-request",
+        "command": "echo",
+        "args": {"message": "first"},
+        "branch": "agent/13-ver",
+        "commit_sha": sha,
+        "subagent_id": "alpha",
+        "submitted_at": common.iso_now(),
+        "run_status": None,
+        "agent_ack": None,
+    }
+    with client.as_user("my-bot"):
+        c1 = client.add_comment(n, json.dumps(bad_envelope, indent=2))
+    handler.run(client, n, c1["id"], config=base_config, repo_root=str(REPO_ROOT))
+    e1 = json.loads(client.get_comment(c1["id"])["body"])
+    assert e1["run_status"] == "parse_error"
+    assert e1["error_kind"] == "unsupported_version"
+    assert e1["original_body_b64"]
+
+    # Agent reads the error, re-submits with protocol_version=1 via submit().
+    with client.as_user("my-bot"):
+        c2 = submit_mod.submit(
+            client, issue_number=n, command="echo",
+            args={"message": "second"},
+            branch="agent/13-ver", commit_sha=sha,
+            subagent_id="alpha", agent_id="primary-ver",
+            config=base_config,
+        )
+    handler.run(client, n, c2["id"], config=base_config, repo_root=str(REPO_ROOT))
+    e2 = json.loads(client.get_comment(c2["id"])["body"])
+    assert e2["run_status"] == "completed"
+    assert e2["summary"]["message"] == "second"

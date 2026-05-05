@@ -231,6 +231,7 @@ def test_poll_runner_pickup_timeout(client, fast_poll_config):
 
 
 def test_poll_running_timeout(client, fast_poll_config):
+    """Pin to running_timeout exactly: short running_timeout, generous total_timeout."""
     issue, _ = _seed_locked_issue(client, agent_id="A")
     sha = client.create_branch("br")
     c = _post_request(client, issue["number"], sha)
@@ -241,6 +242,12 @@ def test_poll_running_timeout(client, fast_poll_config):
     env["checked_out_sha"] = sha
     client.update_comment(c["id"], json.dumps(env))
 
+    # Tighten running deadline; widen the total deadline so only the
+    # running deadline can fire first.
+    cfg = json.loads(json.dumps(fast_poll_config))  # deep copy
+    cfg["comment"]["running_timeout_seconds"] = 1
+    cfg["comment"]["poll_total_timeout_seconds"] = 300
+
     clock = _ManualClock()
 
     def adv_sleep(t):
@@ -249,6 +256,76 @@ def test_poll_running_timeout(client, fast_poll_config):
     with pytest.raises(PollTimeout) as ei:
         poll_mod.poll(
             client, comment_id=c["id"], command="echo",
-            config=fast_poll_config, sleep=adv_sleep, now=clock,
+            config=cfg, sleep=adv_sleep, now=clock,
         )
-    assert ei.value.kind in ("running_timeout", "poll_total_timeout")
+    assert ei.value.kind == "running_timeout"
+
+
+# ---------------------------------------------------------------------------
+# heartbeat callable (iter 2)
+# ---------------------------------------------------------------------------
+
+def test_poll_invokes_heartbeat_each_cycle(client, fast_poll_config):
+    """poll() should call ``heartbeat`` once per cycle when it loops."""
+    issue, _ = _seed_locked_issue(client, agent_id="A")
+    sha = client.create_branch("br")
+    c = _post_request(client, issue["number"], sha)
+
+    counter = {"calls": 0}
+
+    def hb():
+        counter["calls"] += 1
+        # After two cycles, transition to terminal so we exit cleanly.
+        if counter["calls"] >= 2:
+            env = json.loads(client.get_comment(c["id"])["body"])
+            env.update({
+                "run_status": "completed",
+                "run_started_at": common.iso_now(),
+                "run_finished_at": common.iso_now(),
+                "workflow_run_id": 1,
+                "checked_out_sha": sha,
+                "summary": {"echoed_args": {"message": "x"}, "message": "x"},
+                "log_manifest_branch": "_agent_runs",
+                "log_manifest_path": f"runs/{issue['number']}/{c['id']}/manifest.json",
+            })
+            client.update_comment(c["id"], json.dumps(env))
+
+    clock = _ManualClock()
+
+    def adv_sleep(t):
+        clock.advance(max(t, 1.0))
+
+    out = poll_mod.poll(
+        client, comment_id=c["id"], command="echo",
+        config=fast_poll_config, sleep=adv_sleep, now=clock,
+        heartbeat=hb,
+    )
+    assert out["envelope"]["run_status"] == "completed"
+    # heartbeat should have fired at least twice (once for each loop iter).
+    assert counter["calls"] >= 2
+
+
+def test_poll_without_heartbeat_works(client, base_config):
+    """Default behaviour: passing no ``heartbeat`` callable still polls fine."""
+    issue, _ = _seed_locked_issue(client, agent_id="A")
+    sha = client.create_branch("br")
+    c = _post_request(client, issue["number"], sha)
+    # Mark already-terminal so poll exits on first iteration.
+    env = json.loads(c["body"])
+    env.update({
+        "run_status": "completed",
+        "run_started_at": common.iso_now(),
+        "run_finished_at": common.iso_now(),
+        "workflow_run_id": 1,
+        "checked_out_sha": sha,
+        "summary": {"echoed_args": {"message": "x"}, "message": "x"},
+        "log_manifest_branch": "_agent_runs",
+        "log_manifest_path": f"runs/{issue['number']}/{c['id']}/manifest.json",
+    })
+    client.update_comment(c["id"], json.dumps(env))
+    out = poll_mod.poll(
+        client, comment_id=c["id"], command="echo",
+        config=base_config, sleep=_no_sleep, now=_ManualClock(),
+    )
+    assert out["envelope"]["run_status"] == "completed"
+    assert out["envelope"]["agent_ack"] == "finished"
