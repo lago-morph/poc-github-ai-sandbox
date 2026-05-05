@@ -553,8 +553,100 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         print(f"handler: uncaught exception: {exc!r}", file=sys.stderr)
         traceback.print_exc()
+        # Self-diagnostic: post a comment on the originating issue with the
+        # traceback, so MCP-only operators (who can't read workflow logs)
+        # can see what went wrong. Wrapped in its own try/except so a
+        # failure here can't mask the original exit code.
+        if os.environ.get("HANDLER_DEBUG_COMMENT", "1") == "1":
+            try:
+                _post_debug_comment(
+                    token=token,
+                    owner=owner,
+                    repo=repo,
+                    issue_number=int(issue_number),
+                    script="handler.py",
+                    exc=exc,
+                    extra_fields={
+                        "comment": comment_id,
+                        "workflow run": workflow_run_id,
+                    },
+                )
+            except Exception as diag_exc:  # noqa: BLE001
+                print(
+                    f"handler: failed to post debug comment: {diag_exc!r}",
+                    file=sys.stderr,
+                )
         return 1
     return 0
+
+
+def _post_debug_comment(
+    *,
+    token: str,
+    owner: str,
+    repo: str,
+    issue_number: int,
+    script: str,
+    exc: BaseException,
+    extra_fields: Optional[dict[str, Any]] = None,
+) -> None:
+    """Post a self-diagnostic comment with traceback to the given issue.
+
+    Uses ``requests.post`` directly to avoid depending on any code path
+    that might itself be the source of the bug being diagnosed. Secrets
+    are never echoed; the env-var summary only reports presence/absence.
+    """
+    import requests  # local import: keeps run() importable without requests
+
+    # Summarise env vars without leaking secrets.
+    secret_names = {"GH_TOKEN", "GITHUB_TOKEN"}
+    relevant = [
+        "ISSUE_NUMBER", "COMMENT_ID", "PR_NUMBER",
+        "GH_TOKEN", "GITHUB_TOKEN", "GITHUB_REPOSITORY",
+        "GITHUB_RUN_ID", "WORKFLOW_RUN_ID", "GITHUB_WORKSPACE",
+        "AGENT_LOGIN", "AGENT_TASK_LABEL",
+    ]
+    env_lines = []
+    for name in relevant:
+        val = os.environ.get(name)
+        if name in secret_names:
+            env_lines.append(f"  - {name}: {'set' if val else 'unset'}")
+        elif val is not None:
+            env_lines.append(f"  - {name}: {val!r}")
+        else:
+            env_lines.append(f"  - {name}: unset")
+
+    fields_lines = [f"- script: `{script}`", f"- issue: #{issue_number}"]
+    for k, v in (extra_fields or {}).items():
+        fields_lines.append(f"- {k}: {v}")
+    fields_lines.append(f"- python: {sys.version.split()[0]}")
+
+    debug_body = (
+        "**handler self-diagnostic — uncaught exception**\n\n"
+        + "\n".join(fields_lines)
+        + "\n\n"
+        + f"```\n{exc!r}\n```\n\n"
+        + "<details><summary>Traceback</summary>\n\n"
+        + f"```\n{traceback.format_exc()}```\n\n"
+        + "</details>\n\n"
+        + "<details><summary>Environment</summary>\n\n"
+        + "\n".join(env_lines)
+        + "\n\n</details>\n"
+    )
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/comments"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    resp = requests.post(url, headers=headers, json={"body": debug_body}, timeout=15)
+    # Don't raise — caller wraps us anyway; but record non-2xx status.
+    if resp.status_code >= 300:
+        print(
+            f"handler: debug comment POST returned {resp.status_code}: {resp.text[:200]!r}",
+            file=sys.stderr,
+        )
 
 
 if __name__ == "__main__":
