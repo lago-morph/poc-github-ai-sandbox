@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import gzip
+import html
 import io
 import json
 import os
@@ -89,14 +90,21 @@ def parse_agent_meta(body: Optional[str]) -> Optional[dict[str, Any]]:
     - the body is ``None`` or empty, OR
     - no ``agent-meta`` fenced block is present, OR
     - the block exists but its body is not valid JSON.
+
+    The MCP server returns issue bodies with HTML-escaped entities
+    (``&#34;`` for ``"``, etc.). We unescape the JSON region before
+    parsing so the same parser works against MCP and REST responses.
+    Workflow REST responses contain literal quotes so unescape is a
+    no-op there.
     """
     if not body:
         return None
     m = _AGENT_META_RE.search(body)
     if not m:
         return None
+    raw = html.unescape(m.group("json"))
     try:
-        return json.loads(m.group("json"))
+        return json.loads(raw)
     except json.JSONDecodeError:
         return None
 
