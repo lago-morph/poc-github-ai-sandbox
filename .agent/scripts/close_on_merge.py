@@ -145,6 +145,47 @@ def main() -> int:
         import traceback as _tb
         print(f"close_on_merge: uncaught exception: {exc!r}", file=sys.stderr)
         _tb.print_exc()
+        # Self-diagnostic: post a debug comment. Prefer the issue named in
+        # ``Closes #N`` (best-effort PR body fetch); otherwise fall back
+        # to the PR itself, since PRs are issues to GitHub's REST API.
+        if os.environ.get("HANDLER_DEBUG_COMMENT", "1") == "1":
+            try:
+                if __package__ in (None, ""):
+                    from handler import _post_debug_comment  # type: ignore[import-not-found]
+                else:
+                    from .handler import _post_debug_comment
+                target_issue = int(pr_number)
+                try:
+                    import requests as _requests
+                    pr_resp = _requests.get(
+                        f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Accept": "application/vnd.github+json",
+                            "X-GitHub-Api-Version": "2022-11-28",
+                        },
+                        timeout=15,
+                    )
+                    if pr_resp.status_code < 300:
+                        refs = parse_closes_refs((pr_resp.json() or {}).get("body"))
+                        if refs:
+                            target_issue = refs[0]
+                except Exception:  # noqa: BLE001
+                    pass  # fall back to PR
+                _post_debug_comment(
+                    token=token,
+                    owner=owner,
+                    repo=repo,
+                    issue_number=target_issue,
+                    script="close_on_merge.py",
+                    exc=exc,
+                    extra_fields={"pr": pr_number},
+                )
+            except Exception as diag_exc:  # noqa: BLE001
+                print(
+                    f"close_on_merge: failed to post debug comment: {diag_exc!r}",
+                    file=sys.stderr,
+                )
         return 1
     return 0
 

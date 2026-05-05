@@ -146,6 +146,27 @@ def main() -> int:
         import traceback as _tb
         print(f"lock_and_sweep: uncaught exception: {exc!r}", file=sys.stderr)
         _tb.print_exc()
+        # Self-diagnostic: post a debug comment on the originating issue.
+        if os.environ.get("HANDLER_DEBUG_COMMENT", "1") == "1":
+            try:
+                if __package__ in (None, ""):
+                    from handler import _post_debug_comment  # type: ignore[import-not-found]
+                else:
+                    from .handler import _post_debug_comment
+                _post_debug_comment(
+                    token=token,
+                    owner=owner,
+                    repo=repo,
+                    issue_number=int(issue_number),
+                    script="lock_and_sweep.py",
+                    exc=exc,
+                    extra_fields={},
+                )
+            except Exception as diag_exc:  # noqa: BLE001
+                print(
+                    f"lock_and_sweep: failed to post debug comment: {diag_exc!r}",
+                    file=sys.stderr,
+                )
         return 1
     return 0
 
