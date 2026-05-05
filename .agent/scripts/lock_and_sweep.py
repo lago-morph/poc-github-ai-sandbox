@@ -2,8 +2,17 @@
 
 Run on ``issues.opened``. Validates the issue belongs to the protocol
 (creator is ``agent_login`` and body contains a parsable ``agent-meta``
-block); applies the ``agent-task`` label; locks the issue; sweeps any
-non-agent comments that snuck in pre-lock.
+block); applies the ``agent-task`` label; sweeps any non-agent comments
+that snuck in before the label was applied.
+
+Historically this script also locked the issue at creation time, but
+GitHub refuses comments from ``GITHUB_TOKEN`` (the github-actions[bot]
+identity) on locked issues — including the batch-job-handler's own
+terminal envelope writes. Locking is therefore deferred to
+``close_on_merge.py`` (post-merge), where the lock acts as an
+audit-tamper-prevention seal rather than an injection guard. The
+injection-guard role is filled by the batch-job-handler workflow's
+label + author ``if:`` filter, which makes foreign comments inert.
 
 Importable as a module: call :func:`run` directly with a
 ``GitHubClient`` for tests. The ``__main__`` entry point reads
@@ -61,10 +70,13 @@ def run(
 
     # 1. Apply label.
     client.add_label(issue_number, agent_task_label)
-    # 2. Lock the issue.
-    client.lock_issue(issue_number)
 
-    # 3. Sweep non-agent comments.
+    # 2. Sweep non-agent comments that snuck in before the label was
+    #    applied. We deliberately do NOT lock the issue here: a locked
+    #    issue rejects comments from the GITHUB_TOKEN bot identity, and
+    #    the batch-job-handler workflow needs to write its terminal
+    #    envelope back as a comment. The lock is applied later by
+    #    close_on_merge.py once the issue is finished.
     deleted = 0
     kept_unexpected = 0
     for c in client.list_comments(issue_number):
@@ -77,7 +89,7 @@ def run(
         deleted += 1
 
     return {
-        "action": "locked",
+        "action": "labeled",
         "label_applied": agent_task_label,
         "deleted_comments": deleted,
         "kept_agent_comments": kept_unexpected,

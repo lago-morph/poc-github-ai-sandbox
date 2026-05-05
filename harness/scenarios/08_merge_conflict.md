@@ -16,7 +16,7 @@ responsibility").
 2. Create `feature` from `main`.
 3. Create subagent branches `sub_branches["alpha"]`,
    `sub_branches["beta"]` from `feature`.
-4. Create + lock + label issue (`harness-scenario-08`); claim meta.
+4. Create + label (do NOT lock — locking moved to close_on_merge per SPEC §3) issue (`harness-scenario-08`); claim meta.
 5. Commit `conflict.txt` with content `"alpha-version"` on the
    `alpha` subagent branch.
 6. Commit `conflict.txt` with content `"beta-version"` on the

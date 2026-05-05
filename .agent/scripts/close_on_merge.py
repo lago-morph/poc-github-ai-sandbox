@@ -1,8 +1,14 @@
 """``close-on-merge`` script (§7.3).
 
 Triggered on merged PRs. Reads the PR body for ``Closes #N``, verifies
-the linked issue is in ``status: finished``, then closes the issue and
-comments the merge SHA.
+the linked issue is in ``status: finished``, then closes the issue,
+comments the merge SHA, and locks the issue. Locking happens here
+(after the close + final comment) rather than at issue creation,
+because GitHub refuses comments from ``GITHUB_TOKEN`` on locked
+issues — locking earlier would prevent the batch-job-handler workflow
+from writing its terminal envelope. Once the issue is closed and
+finalised the lock acts as a tamper-prevention seal on the audit
+record.
 """
 
 from __future__ import annotations
@@ -88,6 +94,12 @@ def run(
             f"Closed at {iso_now()}."
         )
         client.add_comment(issue_number, msg)
+        # Lock the issue post-close as a tamper-prevention seal on the
+        # audit record. We could not lock earlier without blocking the
+        # batch-job-handler from writing terminal envelopes (GITHUB_TOKEN
+        # cannot comment on locked issues).
+        if not issue.get("locked"):
+            client.lock_issue(issue_number)
         closed.append(issue_number)
 
     return {"action": "closed", "issues_closed": closed, "skipped": skipped}

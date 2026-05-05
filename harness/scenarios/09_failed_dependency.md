@@ -22,8 +22,8 @@ closed-without-merge. The primary calls `should_decline` (from
 ## Agent steps
 1. Build initial meta with `depends_on_prs=[P]`:
    `python -m agent_lib make-initial-meta '{"feature_branch":"<feature>","base_branch":"main","instructions_inline":"Should decline","depends_on_prs":[<P>]}'`.
-2. Create issue (locked, labelled
-   `["agent-task","harness-scenario-09"]`). Claim meta.
+2. Create issue with labels `["agent-task","harness-scenario-09"]`
+   (do NOT lock at creation — see SPEC §3). Claim meta.
 3. The dispatcher fetches PR `P` via `mcp__github__pull_request_read`
    and observes `state="closed"`, `merged=False`.
 4. `abandon-meta` with `--reason "dependency_failed: PR #<P> closed without merge"`.

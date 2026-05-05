@@ -13,7 +13,7 @@ carrying `error_kind="branch_sha_mismatch"`.
 2. Create `feature` from `main`. Record initial HEAD `sha0`.
 3. Commit a file (`note.txt`) on `feature` via
    `mcp__github__create_or_update_file`. Record new HEAD `sha1`.
-4. Create + lock + label issue (`harness-scenario-04`); claim meta.
+4. Create + label (do NOT lock — locking moved to close_on_merge per SPEC §3) issue (`harness-scenario-04`); claim meta.
 
 ## Agent steps
 1. Build request envelope with `--branch <feature> --sha <sha0>`

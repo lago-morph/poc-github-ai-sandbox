@@ -31,7 +31,47 @@ def test_closes_finished_issue_when_pr_body_has_closes_n(client, base_config):
     res = close_on_merge.run(client, pr["number"], config=base_config)
     assert res["action"] == "closed"
     assert issue["number"] in res["issues_closed"]
-    assert client.get_issue(issue["number"])["state"] == "closed"
+    fresh = client.get_issue(issue["number"])
+    assert fresh["state"] == "closed"
+    # close_on_merge now also locks the issue post-close as the audit
+    # tamper-prevention seal (lock at close, not at creation — see SPEC §3).
+    assert fresh["locked"] is True
+
+
+def test_locks_issue_after_close(client, base_config, monkeypatch):
+    """Regression: close_on_merge must call lock_issue after closing."""
+    issue = _make_finished_issue(client)
+    pr = _make_merged_pr(client, body=f"Closes #{issue['number']}")
+
+    locked_calls = []
+    real_lock = client.lock_issue
+
+    def _spy(n, *a, **kw):
+        locked_calls.append(n)
+        return real_lock(n, *a, **kw)
+
+    monkeypatch.setattr(client, "lock_issue", _spy)
+    close_on_merge.run(client, pr["number"], config=base_config)
+    assert issue["number"] in locked_calls
+
+
+def test_does_not_double_lock_already_locked_issue(client, base_config, monkeypatch):
+    """If the issue is already locked, close_on_merge should not call
+    lock_issue again (idempotent)."""
+    issue = _make_finished_issue(client)
+    client.lock_issue(issue["number"])
+    pr = _make_merged_pr(client, body=f"Closes #{issue['number']}")
+
+    locked_calls = []
+    real_lock = client.lock_issue
+
+    def _spy(n, *a, **kw):
+        locked_calls.append(n)
+        return real_lock(n, *a, **kw)
+
+    monkeypatch.setattr(client, "lock_issue", _spy)
+    close_on_merge.run(client, pr["number"], config=base_config)
+    assert locked_calls == []
 
 
 def test_noop_when_issue_not_finished(client, base_config):

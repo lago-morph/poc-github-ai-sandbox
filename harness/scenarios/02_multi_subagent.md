@@ -25,8 +25,10 @@ merges a PR.
 
 ## Agent steps
 1. `make-initial-meta` for the primary issue with `feature_branch =
-   feature`. Create issue, lock it, label
-   `["agent-task","harness-scenario-02"]`. Capture issue `N`.
+   feature`. Create issue with labels
+   `["agent-task","harness-scenario-02"]` (do NOT lock — locking is
+   deferred to close_on_merge per SPEC §3 "Real-world correction").
+   Capture issue `N`.
 2. `claim-meta` and update issue body.
 3. For each subagent (sequentially is fine for the POC):
    a. Build request envelope with `--command echo --branch <sub_branch>

@@ -7,9 +7,11 @@ Two sub-scenarios sharing one issue:
 `.agent/config.json`'s `commands` list. Verify the handler returns a
 terminal `error` with `error_kind="unknown_command"`.
 
-(b) Post a comment on a NON-locked or NON-labeled issue and verify
-the workflow does not run (no terminal envelope is ever written;
-comment body remains the original).
+(b) Post a comment on a NON-labeled (or wrong-author) issue and
+verify the workflow does not run (no terminal envelope is ever
+written; comment body remains the original). The lock check has been
+removed from the handler's gating `if:` (see SPEC §3 "Real-world
+correction"); the surviving filters are label + author.
 
 ## Prereqs
 - Same as scenario 01. The command name `bogus-not-registered` must
@@ -18,9 +20,10 @@ comment body remains the original).
 ## Setup
 1. `run_id = new_run_id()`; `feature = feature_branch(6, run_id)`.
 2. Create `feature` from `main`. Capture HEAD.
-3. Create issue A (this is the locked+labeled one). Lock and label
-   `["agent-task","harness-scenario-06"]`. Claim meta.
-4. Create issue B (this is the gating-test one). DO NOT lock.
+3. Create issue A (this is the labeled one). Label
+   `["agent-task","harness-scenario-06"]`. Claim meta. Do NOT lock —
+   the handler's terminal envelope writes would be blocked.
+4. Create issue B (this is the gating-test one).
    DO NOT add the `agent-task` label. Just label
    `harness-scenario-06`.
 
@@ -36,7 +39,7 @@ comment body remains the original).
 ## Agent steps (b) — workflow-not-fired
 1. Build a perfectly valid `echo` request envelope (use
    `make-request`).
-2. Post it as a comment on issue B (the unlocked, unlabelled one).
+2. Post it as a comment on issue B (the unlabelled one).
 3. Wait `2 * runner_pickup_timeout_seconds` (or a deterministic
    override; for the live harness, use the
    `runner_pickup_timeout_seconds` from `.agent/config.json` — by
@@ -52,8 +55,8 @@ A's meta with `--reason "scenario_06_done"`.
 - (a) Handler emits terminal `error` with
   `error_kind="unknown_command"` and `error_detail` referencing the
   bogus command name.
-- (b) The lock-and-sweep / dispatch path does not enqueue an unlocked
-  or unlabeled issue's comments, so the body is never edited.
+- (b) The dispatch path does not enqueue an unlabeled (or
+  wrong-author) issue's comments, so the body is never edited.
 
 ## Assertions
 - (a) `assert_envelope_terminal(env_a, "error",

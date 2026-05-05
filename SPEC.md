@@ -94,11 +94,13 @@ runs/<issue-number>/<comment-id>/
 
 - A single GitHub bot account (the agent identity) owns all agent-side writes. The login is recorded in `.agent/config.json` as `agent_login`.
 - All structured agent issues carry the label `agent-task`. The lock-and-sweep workflow applies this label.
-- Issues are **always locked** before agents trust them. An unlocked issue is invisible to the protocol regardless of contents.
 - Agents only act on comments where `author == agent_login` AND the body parses as a valid envelope. Foreign comments are inert.
-- Workflow defense-in-depth: `batch-job-handler.yml` no-ops unless `issue.locked == true`, the issue carries `agent-task`, and `comment.user.login == agent_login`. (The lock window is closed by lock-and-sweep, but the workflow re-checks for safety.)
+- Workflow defense-in-depth: `batch-job-handler.yml` no-ops unless the issue carries `agent-task` and `comment.user.login == agent_login`.
+- After the issue's PR is merged, `close-on-merge` locks the issue as a tamper-prevention seal on the audit record.
 
-**Intent.** Public repositories accept arbitrary issues and comments from anonymous users. Three filters (lock + label + author) are individually weak but jointly sufficient to make the protocol safe by default. Lock prevents random comments; label distinguishes agent issues from human bug reports; author check blocks any pre-lock-window injection.
+**Intent.** Public repositories accept arbitrary issues and comments from anonymous users. The label + author filter is individually weak but jointly sufficient to make the protocol safe by default: the label distinguishes agent issues from human bug reports, and the author check blocks any injection by a non-bot identity. Foreign comments do not trigger the handler's `if:` clause, so they are inert.
+
+**Real-world correction (discovered during live POC runs).** The original draft locked agent issues at creation. In practice, GitHub refuses comments from `GITHUB_TOKEN` on locked issues — including the workflow's own terminal envelope writes. The handler is therefore unable to produce its required output if the issue is locked during processing. The corrected design: apply the `agent-task` label at creation (so the workflow's label check is satisfied) and **lock the issue only at close** (post-merge), turning the lock into an audit-tamper-prevention seal rather than an injection guard. The injection-guard role is filled by the workflow's author + label `if:` filter, which makes foreign comments inert without needing the lock.
 
 ## 4. State machines
 
@@ -125,7 +127,19 @@ States in body field `status`:
 
 Primary writes `finished`, posts a final comment summarising the work, then closes the issue.
 
-**Intent.** The `null` state lets external schedulers (a human, another agent, or a teardown step at end of a previous issue) queue work without requiring a live agent. The takeover handshake is loose CAS-by-re-read; it is sufficient because spurious takeovers are rare and self-correcting.
+#### Lock state (orthogonal to `status`)
+
+The GitHub-level `locked` flag is **not** part of the issue `status` machine, but it has a single, well-defined transition:
+
+| event | locked? |
+|---|---|
+| Issue opened by `agent_login` | `false` (lock-and-sweep applies the `agent-task` label only) |
+| Issue body or comments mutated during the working lifecycle | `false` (the batch-job-handler must remain able to write terminal envelopes; `GITHUB_TOKEN` cannot comment on locked issues) |
+| PR merged → close-on-merge fires | `true` (set immediately after the issue is closed; acts as a tamper-prevention seal on the audit record) |
+
+Once an issue is closed and locked, no further protocol writes are expected. The lock is preserved to make the comment thread an immutable audit log.
+
+**Intent.** The `null` state lets external schedulers (a human, another agent, or a teardown step at end of a previous issue) queue work without requiring a live agent. The takeover handshake is loose CAS-by-re-read; it is sufficient because spurious takeovers are rare and self-correcting. Deferring the lock to close-time avoids a hard contradiction with the workflow's own writes (see §3 "Real-world correction").
 
 ### 4.2 Comment
 
@@ -455,10 +469,11 @@ Script behaviour:
 1. Fetch the issue. Parse `agent-meta` from the body.
 2. If body lacks `agent-meta` or the issue creator is not `agent_login`, no-op (this is a human or non-protocol issue).
 3. Apply `agent-task` label.
-4. Lock the issue (`PUT /repos/{owner}/{repo}/issues/{n}/lock`).
-5. List existing comments (sweeping any that snuck in pre-lock). Delete comments not authored by `agent_login`. Comments authored by `agent_login` are unexpected at this stage but left alone (an agent sending a job before lock is a protocol bug, not an attack).
+4. List existing comments (sweeping any that snuck in before the label was applied). Delete comments not authored by `agent_login`. Comments authored by `agent_login` are unexpected at this stage but left alone (an agent sending a job before label-apply is a protocol bug, not an attack).
 
-**Intent.** Locking and pre-lock comment deletion are the workflow's responsibility because the MCP transport may not expose those operations. The workflow uses REST inside the runner — the no-API constraint applies to agents, not workflows.
+> **Note on locking.** Earlier drafts of this spec had `lock-and-sweep` lock the issue at this point. We removed that step: locking the issue blocks the batch-job-handler from writing its terminal envelope back (GitHub refuses comments from `GITHUB_TOKEN` on locked issues). The lock is now applied by `close-on-merge.yml` once the PR is merged. See §3 "Real-world correction".
+
+**Intent.** Pre-label comment deletion is the workflow's responsibility because the MCP transport may not expose comment deletion. The workflow uses REST inside the runner — the no-API constraint applies to agents, not workflows.
 
 ### 7.2 `batch-job-handler.yml`
 
@@ -478,7 +493,6 @@ concurrency:
 jobs:
   handle:
     if: |
-      github.event.issue.locked == true &&
       contains(github.event.issue.labels.*.name, 'agent-task') &&
       github.event.comment.user.login == vars.AGENT_LOGIN
     runs-on: ubuntu-latest
@@ -542,8 +556,9 @@ The script:
 1. Reads the merged PR body for `Closes #N` or an explicit `agent-meta` cross-reference.
 2. Verifies the linked issue is in `finished` state.
 3. Closes the issue if not already closed and posts a comment with the merge SHA and PR link.
+4. Locks the issue (`PUT /repos/{owner}/{repo}/issues/{n}/lock`) once the close-and-final-comment step has succeeded. This is idempotent: if the issue is already locked, the lock is left as-is.
 
-**Intent.** Closing on merge is mechanically separate from the agent's `finished` write because human reviewers may sit on the PR for an arbitrary time. The agent's responsibility ends at PR creation; merge-time closure is a property of the repo's review process.
+**Intent.** Closing on merge is mechanically separate from the agent's `finished` write because human reviewers may sit on the PR for an arbitrary time. The agent's responsibility ends at PR creation; merge-time closure is a property of the repo's review process. Locking is performed here (rather than at issue creation) because the batch-job-handler needs to keep writing terminal envelopes throughout the working lifecycle, and `GITHUB_TOKEN` cannot comment on locked issues. After close, the lock acts as a tamper-prevention seal on the audit record.
 
 ## 8. Polling and heartbeat schedule
 
