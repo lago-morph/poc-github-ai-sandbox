@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "echoed_args": {
+      "message": "hello from gamma"
+    },
+    "message": "hello from gamma"
+  },
+  "run_status": "completed",
+  "command": "echo",
+  "args": {
+    "message": "hello from gamma"
+  },
+  "checked_out_sha": "72a1276ee1411f85afc2a7d188e2e5ef9ef9370c",
+  "started_at": "2026-05-05T15:19:24Z",
+  "finished_at": "2026-05-05T15:19:26Z"
+}
