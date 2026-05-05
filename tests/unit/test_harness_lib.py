@@ -52,8 +52,10 @@ def test_feature_branch_validation():
 
 
 def test_subagent_branch_format():
+    # Double-dash separator avoids the git-ref-prefix collision between
+    # a branch named "foo" and "foo/bar" — discovered live during scenario 01.
     assert subagent_branch("agent/harness-01-abcd1234", "alpha") == \
-        "agent/harness-01-abcd1234/sub-alpha"
+        "agent/harness-01-abcd1234--sub-alpha"
 
 
 def test_subagent_branch_validation():
