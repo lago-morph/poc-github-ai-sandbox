@@ -38,11 +38,75 @@ _CLOSES_RE = re.compile(
 )
 
 
+# Branches that must NEVER be deleted by close_on_merge, regardless of
+# how the PR head ref or any sub-* match looks. ``main`` is the default
+# branch; ``_agent_runs`` is the orphan audit-trail branch (SPEC §6).
+_PROTECTED_BRANCHES = frozenset({"main", "_agent_runs"})
+
+
 def parse_closes_refs(body: Optional[str]) -> list[int]:
     """Return list of issue numbers the PR claims to close."""
     if not body:
         return []
     return [int(m.group(1)) for m in _CLOSES_RE.finditer(body)]
+
+
+def _safe_to_delete(name: Optional[str]) -> bool:
+    """Return True if it's safe to delete this branch.
+
+    Defensive: only branches that start with ``agent/`` are eligible —
+    so even if a PR head somehow points at ``main`` or any other
+    non-agent branch, we leave it alone.
+    """
+    if not name:
+        return False
+    if name in _PROTECTED_BRANCHES:
+        return False
+    if not name.startswith("agent/"):
+        return False
+    return True
+
+
+def _delete_feature_and_subagent_branches(
+    client: GitHubClient,
+    feature_branch: Optional[str],
+) -> list[str]:
+    """Delete the feature branch and any ``<feature>--sub-*`` branches.
+
+    Each deletion is wrapped in try/except so a missing or already-deleted
+    branch (or any transient REST error) does not fail the workflow. The
+    surviving deletions are still applied. Returns the names of branches
+    we *attempted to* and successfully deleted (best-effort: the in-memory
+    client is fully idempotent; the REST client treats 404 as success).
+    """
+    if not feature_branch:
+        return []
+    targets: list[str] = []
+    if _safe_to_delete(feature_branch):
+        targets.append(feature_branch)
+    # Discover subagent branches under the feature.
+    sub_prefix = f"{feature_branch}--sub-"
+    try:
+        branches = client.list_branches()
+    except Exception:  # noqa: BLE001
+        branches = []
+    for b in branches:
+        name = b.get("name") if isinstance(b, dict) else None
+        if not name or name == feature_branch:
+            continue
+        if name.startswith(sub_prefix) and _safe_to_delete(name):
+            targets.append(name)
+
+    deleted: list[str] = []
+    for name in targets:
+        try:
+            client.delete_branch(name)
+            deleted.append(name)
+        except Exception:  # noqa: BLE001
+            # Swallow: missing/already-deleted branches must not fail the
+            # workflow. Other deletions in the batch should still proceed.
+            continue
+    return deleted
 
 
 def run(
@@ -58,9 +122,16 @@ def run(
     if not pr.get("merged"):
         return {"action": "noop", "reason": "pr_not_merged"}
 
+    head_ref = (pr.get("head") or {}).get("ref") if isinstance(pr.get("head"), dict) else None
+
     refs = parse_closes_refs(pr.get("body"))
     if not refs:
-        return {"action": "noop", "reason": "no_closes_refs"}
+        deleted_branches = _delete_feature_and_subagent_branches(client, head_ref)
+        return {
+            "action": "noop",
+            "reason": "no_closes_refs",
+            "deleted_branches": deleted_branches,
+        }
 
     closed: list[int] = []
     skipped: list[dict[str, Any]] = []
@@ -102,7 +173,14 @@ def run(
             client.lock_issue(issue_number)
         closed.append(issue_number)
 
-    return {"action": "closed", "issues_closed": closed, "skipped": skipped}
+    deleted_branches = _delete_feature_and_subagent_branches(client, head_ref)
+
+    return {
+        "action": "closed",
+        "issues_closed": closed,
+        "skipped": skipped,
+        "deleted_branches": deleted_branches,
+    }
 
 
 def main() -> int:

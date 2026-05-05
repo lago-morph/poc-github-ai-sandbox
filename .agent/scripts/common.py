@@ -169,6 +169,7 @@ class GitHubClient(Protocol):
     ) -> dict[str, Any]: ...
     def get_branch_head_sha(self, branch: str) -> Optional[str]: ...
     def delete_branch(self, name: str) -> None: ...
+    def list_branches(self) -> list[dict[str, Any]]: ...
 
     # PR operations --------------------------------------------------------
     def create_pull_request(
@@ -511,6 +512,19 @@ class InMemoryGitHubClient:
         """
         with self._lock:
             self._branches.pop(name, None)
+
+    def list_branches(self) -> list[dict[str, Any]]:
+        """List all branches as dicts ``{name, sha, protected}``.
+
+        Mirrors a paginated REST ``GET /repos/{owner}/{repo}/branches``
+        response shape. The in-memory client has no notion of branch
+        protection, so ``protected`` is always ``False``.
+        """
+        with self._lock:
+            return [
+                {"name": b.name, "sha": b.head_sha, "protected": False}
+                for b in self._branches.values()
+            ]
 
     def commit_files(
         self,
