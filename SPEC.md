@@ -104,7 +104,7 @@ runs/<issue-number>/<comment-id>/
 
 The bot login is **not** stored in the static config. It is sourced at runtime from one of two channels, depending on where code is running:
 
-- **In a GitHub Actions workflow.** The workflow exposes the value via the `AGENT_LOGIN` environment variable, populated from the repo-level `vars.AGENT_LOGIN` (a one-time admin setup). Workflow `if:` guards reference `vars.AGENT_LOGIN` directly.
+- **In a GitHub Actions workflow.** The workflow exposes the value via the `AGENT_LOGIN` environment variable, populated from the repo-level `vars.AGENT_LOGIN` (a one-time admin setup). Workflow `if:` guards and `env:` blocks reference `vars.AGENT_LOGIN`. To keep workflows functional on deployments where the admin has not yet set the repo variable, the YAML expression includes a literal fallback: `${{ vars.AGENT_LOGIN || 'jonathanmanton' }}`. New deployments override the fallback by setting `vars.AGENT_LOGIN` (no YAML edit required); the literal stays as a deployment-friction safety net for the canonical poc-github-ai-sandbox repo.
 - **In an agent harness.** The agent discovers its own login at session start by calling `mcp__github__get_me` (or the equivalent REST `GET /user`) and passes the resolved value through to the skill scripts (`submit.py`, `lock_and_sweep.py`) as an explicit parameter. As a fallback, the same `AGENT_LOGIN` environment variable is honored.
 
 Skill scripts apply the resolution order: explicit argument → `AGENT_LOGIN` environment variable → raise. There is no fallback to a static config key, and the absence of all three is a configuration error, not a soft default.
