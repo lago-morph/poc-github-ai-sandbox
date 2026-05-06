@@ -401,6 +401,12 @@ def _load_command_handler(command: str):
     return mod.run
 
 
+def _retry_sleep(seconds: float) -> None:
+    """Backoff sleep helper. Indirected so tests can stub it out."""
+    import time as _time
+    _time.sleep(seconds)
+
+
 def _retry_put(
     client: GitHubClient,
     path: str,
@@ -408,9 +414,24 @@ def _retry_put(
     message: str,
     branch: str,
     *,
-    retries: int = 3,
+    retries: int = 6,
 ) -> None:
-    """Put a file with simple retry-on-non-fast-forward semantics."""
+    """Put a file with retry + jittered exponential backoff.
+
+    ``put_file_contents`` re-fetches the branch HEAD on each call, so
+    each retry sees a fresh ``head_sha``. The backoff between attempts
+    spreads out concurrent writers so they don't all collide in the
+    same sub-millisecond race window — discovered live during scenario
+    02 (multi-subagent), where three handlers writing to ``_agent_runs``
+    collided and the (then) no-backoff retry loop exhausted all three
+    attempts before any of them could settle.
+
+    Backoff schedule (no-jitter base): 0.5s, 1s, 2s, 4s, 8s, 16s — caps
+    at 30s. Each delay is multiplied by a random factor in [0.5, 1.5)
+    to spread out concurrent writers further.
+    """
+    import random as _random
+
     last_exc: Optional[BaseException] = None
     for attempt in range(retries):
         try:
@@ -418,6 +439,11 @@ def _retry_put(
             return
         except Exception as e:  # noqa: BLE001
             last_exc = e
+            if attempt + 1 >= retries:
+                break
+            base = min(0.5 * (2 ** attempt), 30.0)
+            jitter = _random.uniform(0.5, 1.5)
+            _retry_sleep(base * jitter)
     if last_exc is not None:
         raise last_exc
 
