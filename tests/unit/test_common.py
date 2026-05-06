@@ -82,7 +82,11 @@ def test_iso_now_format():
 def test_load_config_reads_default_file(repo_root_path):
     cfg = common.load_config(repo_root_path / ".agent" / "config.json")
     assert cfg["protocol_version"] == 1
-    assert cfg["agent_login"] == "jonathanmanton"
+    # The static ``agent_login`` key was removed in session 3; the
+    # workflow + agent harnesses now source the bot login from the
+    # ``AGENT_LOGIN`` env var (populated from ``vars.AGENT_LOGIN`` in CI
+    # or ``mcp__github__get_me`` at agent session start).
+    assert "agent_login" not in cfg
     assert "echo" in cfg["commands"]
 
 
@@ -236,6 +240,42 @@ def test_log_writer_write_after_finalize_raises():
     with pytest.raises(RuntimeError):
         lw.write({"ts": common.iso_now(), "stream": "stdout",
                   "phase": "exec", "data": "after-close"})
+
+
+def test_log_writer_set_max_chunk_bytes_updates_threshold():
+    """``set_max_chunk_bytes`` mutates ``_max`` and takes effect mid-stream."""
+    lw = common.LogWriter(max_chunk_bytes_compressed=10_000_000)
+    # Writing several padded lines at 10MB threshold rotates 0 chunks.
+    pad = "x" * 200
+    for i in range(20):
+        lw.write({"ts": common.iso_now(), "stream": "stdout",
+                  "phase": "exec", "data": pad + str(i)})
+    # Tighten the threshold to a tiny value and write more — this should
+    # force rotation on subsequent writes.
+    lw.set_max_chunk_bytes(64)
+    assert lw._max == 64
+    for i in range(20):
+        lw.write({"ts": common.iso_now(), "stream": "stdout",
+                  "phase": "exec", "data": pad + str(i)})
+    chunks = lw.finalize()
+    assert len(chunks) >= 2
+
+
+def test_log_writer_set_max_chunk_bytes_after_close_raises():
+    lw = common.LogWriter()
+    lw.write({"ts": common.iso_now(), "stream": "stdout",
+              "phase": "exec", "data": "hi"})
+    lw.finalize()
+    with pytest.raises(RuntimeError):
+        lw.set_max_chunk_bytes(1024)
+
+
+def test_log_writer_set_max_chunk_bytes_rejects_non_positive():
+    lw = common.LogWriter()
+    with pytest.raises(ValueError):
+        lw.set_max_chunk_bytes(0)
+    with pytest.raises(ValueError):
+        lw.set_max_chunk_bytes(-1)
 
 
 # ---------------------------------------------------------------------------

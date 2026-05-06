@@ -55,7 +55,7 @@ AGENTS.md                  — repo conventions (branch naming, MCP quirks, etc.
 README.md                  — this file
 
 .agent/                    — workflow scripts (live), schemas, central config
-  config.json              — protocol_version, agent_login, timeouts, log branch
+  config.json              — protocol_version, labels, timeouts, log branch (agent_login is sourced at runtime — see SPEC §3.1)
   schemas/                 — issue body, comment envelope, log manifest, per-command (Draft 2020-12)
   scripts/
     common.py              — GitHubClient Protocol + InMemoryGitHubClient + LogWriter + helpers

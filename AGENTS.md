@@ -77,9 +77,12 @@ creation, if you need a tamper-prevention seal.
 `jonathanmanton`), not as a bot. Workflow `if:` filters comparing to
 a wrong identity will never match.
 
-**Do**: At session start, fetch the actual login. The current value
-is committed in `.agent/config.json` and referenced as a literal in
-workflow YAMLs.
+**Do**: At session start, fetch the actual login via
+`mcp__github__get_me` and pass it to skill scripts (`submit.py`,
+`lock_and_sweep.py`) as the explicit `agent_login` argument. The static
+`agent_login` config key was removed in session 3. CI workflows source
+the same value from a repo-level `vars.AGENT_LOGIN` GitHub Actions
+variable; see SPEC §3.1.
 
 #### Don't expect to read CI logs
 
@@ -227,7 +230,7 @@ tolerance), §6 (branch naming).
 
 ## Project-specific facts
 
-- **`agent_login`**: `jonathanmanton` (literal in workflow YAMLs).
+- **`agent_login`**: `jonathanmanton` (sourced at runtime — `vars.AGENT_LOGIN` in CI, `mcp__github__get_me` from agent harnesses; SPEC §3.1).
 - **Default branch**: `main`.
 - **Protected branches** (auto-cleanup never touches): `main`,
   `_agent_runs`, the dispatcher's working branch.

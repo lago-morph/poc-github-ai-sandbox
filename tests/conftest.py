@@ -7,11 +7,19 @@ loaders, and provides factory helpers used by most tests.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Optional
 
 import pytest
+
+
+# The static ``agent_login`` config key was removed in session 3. Tests
+# that need a bot login pull it from the ``agent_login`` fixture (or the
+# ``AGENT_LOGIN`` env var) instead of ``base_config["agent_login"]``.
+TEST_AGENT_LOGIN = "jonathanmanton"
+os.environ.setdefault("AGENT_LOGIN", TEST_AGENT_LOGIN)
 
 # Make sure the repo root and key script directories are importable. We
 # also pre-load the central common module so other modules don't end up
@@ -56,9 +64,24 @@ def repo_root_path() -> Path:
 
 @pytest.fixture
 def base_config() -> dict[str, Any]:
-    """A copy of .agent/config.json for tests to mutate freely."""
+    """A copy of .agent/config.json for tests to mutate freely.
+
+    The ``agent_login`` key is INJECTED into the returned dict for
+    backwards compatibility with tests written against the old shape.
+    The on-disk config no longer carries this key (removed in session 3
+    — see SPEC §3 / §5.5). Tests that exercise the actual file should
+    use :func:`load_config` and assert ``agent_login`` is absent.
+    """
     with (REPO_ROOT / ".agent" / "config.json").open("r", encoding="utf-8") as f:
-        return json.load(f)
+        cfg = json.load(f)
+    cfg.setdefault("agent_login", TEST_AGENT_LOGIN)
+    return cfg
+
+
+@pytest.fixture
+def agent_login() -> str:
+    """Bot login for tests. Mirrors the AGENT_LOGIN env var."""
+    return TEST_AGENT_LOGIN
 
 
 @pytest.fixture

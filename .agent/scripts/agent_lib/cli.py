@@ -24,6 +24,7 @@ from . import (
     claim_meta,
     finish_meta,
     heartbeat_meta,
+    make_ack_envelope,
     make_initial_meta,
     make_request_envelope,
     parse_body,
@@ -74,6 +75,20 @@ def cmd_make_request(ns: argparse.Namespace) -> int:
     except EnvelopeArgsInvalid as e:
         _die(str(e))
     except (TypeError, ValueError) as e:
+        _die(str(e))
+    _print(env)
+    return 0
+
+
+def cmd_make_ack(ns: argparse.Namespace) -> int:
+    try:
+        env = make_ack_envelope(
+            ns.ack_for,
+            agent_id=ns.agent_id,
+            session_id=ns.session_id,
+            note=ns.note,
+        )
+    except ValueError as e:
         _die(str(e))
     _print(env)
     return 0
@@ -222,6 +237,20 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-validate", action="store_true",
                    help="skip args schema validation")
     s.set_defaults(func=cmd_make_request)
+
+    # make-ack
+    s = sub.add_parser(
+        "make-ack",
+        help="build a follow-up agent-ack comment envelope",
+    )
+    s.add_argument(
+        "--ack-for", type=int, dest="ack_for", required=True,
+        help="comment_id of the batch-job-request to ack",
+    )
+    s.add_argument("--agent-id", dest="agent_id", default=None)
+    s.add_argument("--session-id", dest="session_id", default=None)
+    s.add_argument("--note", default=None)
+    s.set_defaults(func=cmd_make_ack)
 
     # make-initial-meta
     s = sub.add_parser("make-initial-meta",

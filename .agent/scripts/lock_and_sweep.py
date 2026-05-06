@@ -14,10 +14,16 @@ audit-tamper-prevention seal rather than an injection guard. The
 injection-guard role is filled by the batch-job-handler workflow's
 label + author ``if:`` filter, which makes foreign comments inert.
 
+``agent_login`` is sourced from the ``AGENT_LOGIN`` environment variable
+(populated from a repo-level GitHub Actions variable so multi-user
+deployments don't require workflow-YAML edits) or passed in explicitly
+by tests. The static ``agent_login`` config key was removed in session 3
+to drop the indirection.
+
 Importable as a module: call :func:`run` directly with a
 ``GitHubClient`` for tests. The ``__main__`` entry point reads
-environment variables (``ISSUE_NUMBER``) and is wired up by the
-workflow file.
+environment variables (``ISSUE_NUMBER``, ``AGENT_LOGIN``) and is wired
+up by the workflow file.
 """
 
 from __future__ import annotations
@@ -49,10 +55,21 @@ def run(
 ) -> dict[str, Any]:
     """Apply lock-and-sweep behaviour to an issue.
 
+    ``agent_login`` resolution order: explicit argument → ``AGENT_LOGIN``
+    environment variable → raise. There is no fallback to a static config
+    key (removed in session 3).
+
     Returns a small dict describing what happened (useful for tests).
     """
     cfg = config or load_config()
-    agent_login = agent_login or cfg["agent_login"]
+    if agent_login is None:
+        agent_login = os.environ.get("AGENT_LOGIN") or None
+    if not agent_login:
+        raise RuntimeError(
+            "agent_login is required: pass it explicitly or set the "
+            "AGENT_LOGIN environment variable (typically populated by the "
+            "workflow from vars.AGENT_LOGIN)"
+        )
     agent_task_label = (
         agent_task_label
         or cfg.get("labels", {}).get("agent_task", "agent-task")
@@ -103,14 +120,15 @@ def main() -> int:
       - ``ISSUE_NUMBER``       the issue that just opened
       - ``GH_TOKEN`` / ``GITHUB_TOKEN``  REST API token
       - ``GITHUB_REPOSITORY``  ``owner/repo`` slug
+      - ``AGENT_LOGIN``        bot login the protocol expects to author
+                                envelopes (set from ``vars.AGENT_LOGIN``)
     Optional:
-      - ``AGENT_LOGIN``        override the login from ``.agent/config.json``
       - ``AGENT_TASK_LABEL``   override the label from ``.agent/config.json``
 
     On success exits 0; on uncaught exception prints to stderr and
     exits 1. Tests call :func:`run` directly with an in-memory client.
     """
-    required = ["ISSUE_NUMBER", "GITHUB_TOKEN", "GITHUB_REPOSITORY"]
+    required = ["ISSUE_NUMBER", "GITHUB_TOKEN", "GITHUB_REPOSITORY", "AGENT_LOGIN"]
     print(
         "lock_and_sweep: required env vars: "
         + ", ".join(required)
@@ -120,17 +138,20 @@ def main() -> int:
     issue_number = os.environ.get("ISSUE_NUMBER")
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     repo_slug = os.environ.get("GITHUB_REPOSITORY")
+    agent_login = os.environ.get("AGENT_LOGIN") or None
     missing = [
         name for name, val in (
             ("ISSUE_NUMBER", issue_number),
             ("GITHUB_TOKEN", token),
             ("GITHUB_REPOSITORY", repo_slug),
+            ("AGENT_LOGIN", agent_login),
         ) if not val
     ]
     if missing:
         print(f"lock_and_sweep: missing env vars: {missing}", file=sys.stderr)
         return 1
     assert issue_number is not None and token is not None and repo_slug is not None
+    assert agent_login is not None
     if "/" not in repo_slug:
         print(
             f"lock_and_sweep: GITHUB_REPOSITORY must be 'owner/repo', got: {repo_slug!r}",
@@ -151,7 +172,7 @@ def main() -> int:
         run(
             client,
             int(issue_number),
-            agent_login=os.environ.get("AGENT_LOGIN") or None,
+            agent_login=agent_login,
             agent_task_label=os.environ.get("AGENT_TASK_LABEL") or None,
         )
     except Exception as exc:  # noqa: BLE001

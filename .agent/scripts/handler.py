@@ -107,6 +107,16 @@ def run(
 
     assert isinstance(parsed, dict)  # for type checkers
 
+    # Dispatch on envelope kind. Acks are informational follow-up comments;
+    # the handler does not process them as batch jobs. They are surfaced
+    # through the working->finished gate (SPEC §4.1). Without this dispatch
+    # the schema validation step below would parse-error every agent-ack
+    # comment because comment-envelope.schema.json says
+    # ``kind: const "batch-job-request"``.
+    kind = parsed.get("kind")
+    if kind == "agent-ack":
+        return {"action": "noop", "reason": "ack_comment", "kind": "agent-ack"}
+
     # Idempotency on already-terminal envelopes (webhook redelivery).
     if is_terminal_run_status(parsed.get("run_status")):
         return {"action": "noop", "reason": "already_terminal", "run_status": parsed["run_status"]}

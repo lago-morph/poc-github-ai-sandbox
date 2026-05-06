@@ -735,6 +735,20 @@ class LogWriter:
         self._closed = False
 
     # ------------------------------------------------------------------
+    def set_max_chunk_bytes(self, max_chunk_bytes_compressed: int) -> None:
+        """Update the rotation threshold mid-stream (use sparingly).
+
+        Useful for test commands like chatty that want to force rotation
+        at a smaller threshold than the production default.
+        """
+        if self._closed:
+            raise RuntimeError("LogWriter is closed")
+        n = int(max_chunk_bytes_compressed)
+        if n < 1:
+            raise ValueError("max_chunk_bytes_compressed must be >= 1")
+        self._max = n
+
+    # ------------------------------------------------------------------
     def _rotate_if_needed(self) -> None:
         # Flush current gzip stream to estimate compressed size.
         self._gz.flush()
