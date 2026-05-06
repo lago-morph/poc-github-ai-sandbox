@@ -15,7 +15,8 @@ streams remain.
 
 ## Current state snapshot
 
-- `main` HEAD reflects all merged work from session 1.
+- `main` HEAD reflects all merged work from session 1, including the
+  retrospective skill specs (PR #50, PR #51).
 - 386 unit tests passing, ≥95% coverage.
 - 9 of 15 harness scenarios driven live; 6 deferred (see below).
 - 7 real-world bugs caught and fixed; spec amendments inline in
@@ -24,9 +25,8 @@ streams remain.
   (issues #18, #21, #22, #23, #25, #26, #27, #28, #31; merged PRs
   #19, #29, #30; `_agent_runs` orphan branch with manifests + log
   chunks).
-- `feat/retrospective-skill-specs` branch (PR #50) holds the skill
-  specs harvested from session 1. Not merged yet — the user reviews
-  before merging.
+- Skill specs (`retrospective/`) are committed but **will not be
+  implemented in this repo** — they will be processed elsewhere.
 
 For the full narrative, read `ITERATION_REPORT.md`.
 
@@ -46,130 +46,108 @@ For the full narrative, read `ITERATION_REPORT.md`.
   meta block transitions, terminal-status parsing. Used by the agent
   side of live scenarios.
 
-## What's not done (the priority queue for the next agent)
+## Decisions locked in (session 2)
 
-These are ranked by impact + tractability. Pick from the top.
+The user reviewed the open priority queue and made the following calls:
 
-### 1. Fix `agent_ack` for MCP-only agents — high impact
+- **`agent_ack` for MCP-only agents** → take **Option A**: ack lives
+  in a follow-up `kind: agent-ack` comment with
+  `ack_for: <comment_id>`. The workflow's restart-recovery /
+  `working → finished` gate must recognize either form.
+- **`chatty` command** → fix by **lowering the chunk-size threshold
+  for the test command** (so the `chatty` invocation triggers
+  rotation under realistic line counts). Update scenario 12's spec
+  to document the choice.
+- **Skills in `retrospective/`** → **NOT implemented in this repo.**
+  They will be processed elsewhere. Do not start a build task here.
+- **Spec polish (§6 below in the old queue)** → **do all three
+  items**.
 
-The protocol's spec (§9.4 step 7) requires the agent to **edit** the
-batch-job-request comment to set `agent_ack: finished`. The MCP
-server doesn't expose `update_comment`. The protocol is therefore
-unimplementable end-to-end via MCP.
+## Plan for the next session (in this order)
 
-In the live scenarios, this was skipped (terminal envelopes are
-unack'd; issues still close cleanly). But the spec needs to formalize
-either:
+Work the plan top to bottom. Re-run the unit tests after each step
+and update this HANDOFF.md at the end of each step so the next agent
+inherits an accurate snapshot.
 
-- **Option A**: Spec amendment — ack lives in a follow-up
-  `kind: agent-ack` comment with `ack_for: <comment_id>`. The
-  workflow's restart-recovery logic recognizes either form.
-- **Option B**: A direct REST helper invoked from the Actions runner
-  (the runner can edit comments, just not via MCP). The agent posts
-  a "please ack" comment that the workflow handler interprets and
-  edits the original.
+### Step 1 — Implement subagent-ack comment kind + spec update
 
-Recommend **Option A**. It keeps the protocol agent-self-contained
-without requiring a workflow round-trip for every ack. Update SPEC §5
-and §9, add a test command for ack handling, regression-test it.
+- Define a new comment envelope `kind: "agent-ack"` with field
+  `ack_for: <original_comment_id>` (and `agent_acked_at` timestamp).
+  Add the JSON Schema at `.agent/schemas/comment-envelope.schema.json`
+  (or a sibling file) and wire it into validation.
+- Update `SPEC.md`:
+  - **§5.2** — document the new envelope shape alongside the existing
+    `batch-job-request` shape.
+  - **§9.4 step 7** — the agent posts a fresh ack comment instead of
+    editing the batch-job-request comment in place.
+  - **§4.1** — the `working → finished` gate accepts either an
+    in-place `agent_ack: finished` *or* a matching follow-up
+    `kind: agent-ack` comment with `ack_for` pointing at the
+    relevant batch-job-request comment id.
+- Update the workflow handler / restart-recovery logic
+  (`.agent/scripts/handler.py`, `agent_lib/`) so it treats both forms
+  as ack-equivalent. The MCP-only primary path should emit the new
+  follow-up form by default.
+- Add a regression test for ack handling (both forms accepted; mixed
+  state across multiple comments behaves correctly).
+- Refresh the comment-envelope unit tests; expect ≥386 passing after
+  the new tests land.
 
-### 2. Run the deferred live scenarios — medium impact
+### Step 2 — Lower chunk-size threshold for the test command
 
-Six of the original 15 scenarios were deferred from session 1 with
-documented reasons (see `ITERATION_REPORT.md` Phase 4 "Scenarios
-deliberately not driven"):
+- In `.agent/commands/chatty.py` (or its config), reduce the
+  chunk-size threshold used by the test command so a modest line
+  count reliably triggers `logs.max_chunk_bytes_compressed`-driven
+  rotation. Keep production defaults intact.
+- Update `harness/scenarios/12_*.md` to document the chosen fix and
+  the new expected behavior.
+- Add / refresh the unit test that asserts rotation fires at the
+  reduced threshold.
 
-- **08 merge_conflict** — needs an actual `git merge` on the runner
-  rather than the in-memory overlay used in scenario 02. Real merge
-  semantics will surface either confirmation or a new bug.
-- **09 failed_dependency** — pure agent-side; mechanically identical
-  to abandon paths already exercised. **Skip unless you want
-  belt-and-suspenders coverage.**
-- **10 crash_recovery** — requires inducing a workflow crash mid-run.
-  Hard to do via MCP. Consider a "panic" command (`crash-after-N`)
-  added to the registry.
-- **11 webhook_redelivery** — idempotency is unit-tested.
-  Re-triggering is hard via MCP. **Lower priority.**
-- **14 concurrent_claim** — a true race needs two distinct identities
-  (two MCP servers / tokens). Probably out of scope for a single-agent
-  build.
-- **15 stale_takeover** — requires back-dating `status_ts` by
-  ≥7200s. Mechanically a body update; the takeover handshake is
-  unit-tested. Forensically uninteresting. **Skip.**
+### Step 3 — Run the suggested deferred scenarios + regression-rerun the tested ones
 
-**Recommended**: do 08 and 10. Skip the rest until there's a use case.
+- **Suggested deferred scenarios (do these):**
+  - **08 merge_conflict** — actual `git merge` on the runner (not the
+    in-memory overlay used in scenario 02).
+  - **10 crash_recovery** — requires a `crash-after-N` test command
+    in `.agent/commands/` to induce a deterministic workflow crash
+    mid-run. Build the command first, then drive the scenario.
+- **Skip:** 09 failed_dependency, 11 webhook_redelivery,
+  14 concurrent_claim, 15 stale_takeover. (Reasons in
+  `ITERATION_REPORT.md` Phase 4 "Scenarios deliberately not driven".
+  Revisit only if a concrete use case appears.)
+- **Re-run the 9 already-tested scenarios** end-to-end. This is
+  *both* belt-and-suspenders coverage *and* a regression check for
+  step 1's ack-semantics change — if the new follow-up ack form
+  isn't wired correctly, `working → finished` will hang here.
+- **Bug-fix loop**: when a scenario fails, fix the root cause
+  (spec or code), add a unit test if applicable, log the bug + fix
+  in `harness/RUNS.md`, and rerun. Repeat until all chosen scenarios
+  reach their expected terminal state.
 
-### 3. Strengthen `chatty` command default — low impact
+### Step 4 — Spec polish
 
-Scenario 12 (huge log) discovered that `chatty(20000)` doesn't
-trigger chunk rotation under the default config — the output
-compresses too well. The session's workaround was to invoke with
-`lines=60000`. Either:
+Three items, all mechanical:
 
-- Raise `chatty.py`'s default `lines` to ≥50000, OR
-- Pad each line less compressibly so 20000 is enough, OR
-- Lower the chunk-size threshold for the test command.
-
-Update scenario 12's spec to reflect whichever fix.
-
-### 4. Build the skills from `retrospective/` — high leverage
-
-PR #50 holds 9 skill specs + an AGENTS.md template spec. None are
-implemented. Each `SPEC.md` is self-contained enough to dispatch as
-a separate build task.
-
-Recommended build order:
-
-1. **`subagent-prompting`** — foundational for the rest. Quick win.
-2. **`agent-dispatch-loop`** — the iterative loop pattern; this
-   project's bread and butter.
-3. **`parallel-subagent-fanout`** — the workflow the user explicitly
-   asked to encode ("I often want this but it's a lot of typing").
-4. **`github-mcp-tips`** — high payoff for any future GitHub project.
-5. **`live-debug-from-mcp-only`** — pairs with `github-mcp-tips`.
-6. **`forensic-vs-aggressive-cleanup`** — needed before the next
-   live-execution session.
-7. **`spec-vs-implementation-gap-discovery`** — process discipline;
-   the most "soft" of the bunch.
-8. **`self-retrospective`** — meta-skill. Build last so it can be
-   tested on itself.
-9. **`polling-without-sleep-in-restricted-sandbox`** — small enough
-   to inline if you want.
-
-### 5. Write the actual `AGENTS.md` from the spec — quick win
-
-`retrospective/agents-md-template/SPEC.md` enumerates 15 conventions
-to add. The current `AGENTS.md` (this branch) is a starter; the
-spec has more rules to harvest.
-
-This is largely mechanical: read the spec, write the file. ~30
-minutes of work. Highest leverage relative to time spent.
-
-### 6. Address spec-side nice-to-haves — low impact
-
-Documented in `ITERATION_REPORT.md` Phase 4 "What I'd recommend
-next":
-
-- **Drop the `agent_login` Actions-variable indirection** — already
-  done in this session as the literal `'jonathanmanton'` in the
-  workflow YAML. For multi-user deployment, source from
-  `.agent/config.json` at runtime via a setup step.
-- **Update SPEC §6 branch model** — already done with the
-  "Real-world correction" note. Could be cleaned up to merge the
-  correction into the main text.
-- **Promote the diagnostic-comment pattern to a first-class spec
-  feature** — mentioned in the SPEC's amendments; could be
-  formalized as a dedicated section.
-
-These are spec polish, not blocking work.
+- **Drop the `agent_login` Actions-variable indirection.** The
+  literal `'jonathanmanton'` is currently hard-coded in the workflow
+  YAML. Replace with a setup step that sources `agent_login` from
+  `.agent/config.json` at runtime, so multi-user deployment works
+  without YAML edits.
+- **Merge the SPEC §3 / §6 "Real-world correction" notes into the
+  main spec text** so the corrected design is the primary narrative
+  and the historical note is removed (or moved to a changelog
+  appendix).
+- **Promote the self-diagnostic-comment pattern to a first-class
+  SPEC section.** It currently lives only as an amendment / inline
+  reference. Give it a dedicated section describing when the
+  workflow handler emits a diagnostic comment, the envelope shape,
+  and the consumer expectations.
 
 ## Things the next agent should NOT do
 
-- **Don't merge PR #50** unless the user requests it. The user
-  reviews skill spec packages before merging — that's part of the
-  value of mode B retrospectives.
-- **Don't auto-implement skills from `retrospective/`** without
-  user direction. Each skill is a separate task.
+- **Don't implement skills from `retrospective/`** in this repo. They
+  are processed elsewhere. The specs stay committed for reference.
 - **Don't lock issues at creation.** This was bug #6 — the protocol's
   highest-impact spec defect. Lock at close, never at creation.
 - **Don't use `<feature>/sub-<id>` as a subagent branch separator.**
@@ -180,6 +158,9 @@ These are spec polish, not blocking work.
 - **Don't trust unit tests as the bar for "done."** They only catch
   implementation defects. Spec defects and transport quirks need
   live execution.
+- **Don't skip the regression rerun in step 3.** Step 1 changes ack
+  semantics; the only way to confirm nothing regressed is to re-drive
+  the 9 already-tested scenarios end-to-end.
 
 ## Known traps (live and active right now)
 
@@ -211,7 +192,7 @@ These are spec polish, not blocking work.
 | Full session narrative | `ITERATION_REPORT.md` |
 | Protocol design | `SPEC.md` |
 | What's been live-tested | `harness/RUNS.md` |
-| Skill specs to build | `retrospective/<skill>/SPEC.md` |
+| Skill specs (reference only; not built here) | `retrospective/<skill>/SPEC.md` |
 | MCP quirks reference | `retrospective/github-mcp-tips/excerpts.jsonl` |
 | Pre-existing live artifacts | Issues #18-#31 on the repo |
 
@@ -224,12 +205,12 @@ These are spec polish, not blocking work.
    python -m pytest tests/ -q --tb=short
    ```
    Expect 386 passing.
-3. Ask the user which work stream they want next, presenting the
-   priority queue from §"What's not done" above.
-4. If the user defers, default to:
-   - Build `subagent-prompting` skill from
-     `retrospective/subagent-prompting/SPEC.md`. It's the quickest,
-     highest-utility skill build.
+3. Start at the top of §"Plan for the next session" — Step 1
+   (subagent-ack comment kind). Don't skip ahead; later steps depend
+   on the ack semantics landing first.
+4. Update this HANDOFF.md at the end of each step with what changed
+   (per §"Provenance" — the file is the project's current-state
+   document).
 
 ## Provenance
 
@@ -241,6 +222,10 @@ that built and live-tested the POC. It's the synthesis of:
 - The "What I'd recommend next" section at the end of
   `ITERATION_REPORT.md`
 - The retrospective skill specs in `retrospective/`
+
+Updated in session 2 with the user's decisions on the open priority
+queue and the resulting four-step plan above. PR #50 / #51 (skill
+specs) confirmed merged.
 
 Update this file at the start of each new session with what's
 changed; treat it as the project's current-state document.
