@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "echoed_args": {
+      "message": "beta-collide"
+    },
+    "message": "beta-collide"
+  },
+  "run_status": "completed",
+  "command": "echo",
+  "args": {
+    "message": "beta-collide"
+  },
+  "checked_out_sha": "4240ba2650ce0eaed2a5c97d5e1695c9050190ad",
+  "started_at": "2026-05-06T05:53:55Z",
+  "finished_at": "2026-05-06T05:53:56Z"
+}
