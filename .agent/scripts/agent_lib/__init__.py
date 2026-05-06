@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from .envelope import (
     EnvelopeArgsInvalid,
+    make_ack_envelope,
     make_request_envelope,
 )
 from .meta import (
@@ -34,8 +35,10 @@ from .meta import (
     replace_meta_in_body,
 )
 from .poll import (
+    is_request_acked,
     is_terminal,
     manifest_path_for,
+    parse_ack_comment,
     parse_terminal_status,
     summary_path_for,
 )
@@ -47,10 +50,13 @@ __all__ = [
     "claim_meta",
     "finish_meta",
     "heartbeat_meta",
+    "is_request_acked",
     "is_terminal",
+    "make_ack_envelope",
     "make_initial_meta",
     "make_request_envelope",
     "manifest_path_for",
+    "parse_ack_comment",
     "parse_body",
     "parse_terminal_status",
     "render_body",

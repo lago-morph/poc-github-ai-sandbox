@@ -12,6 +12,13 @@ therefore deferred to ``close_on_merge`` (post-merge); the
 batch-job-handler's ``if:`` filter (label + author) is what makes
 foreign comments inert.
 
+``agent_login`` resolution order: explicit ``agent_login`` keyword
+argument → ``AGENT_LOGIN`` environment variable → raise. There is no
+fallback to a static config key (removed in session 3): agent harnesses
+are expected to discover their own login via ``mcp__github__get_me``
+and pass it explicitly, while CI invocations populate ``AGENT_LOGIN``
+from a repo-level ``vars.AGENT_LOGIN``.
+
 Importable: :func:`submit` (programmatic) or run as
 ``python -m skills.batch-job.submit`` (not wired up here for the POC).
 """
@@ -19,6 +26,7 @@ Importable: :func:`submit` (programmatic) or run as
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Optional
 
 try:
@@ -99,11 +107,26 @@ def submit(
     commit_sha: str,
     subagent_id: str,
     agent_id: Optional[str] = None,
+    agent_login: Optional[str] = None,
     config: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Build the envelope and post it. Returns the new comment dict."""
+    """Build the envelope and post it. Returns the new comment dict.
+
+    ``agent_login`` is required. Resolution order: explicit argument →
+    ``AGENT_LOGIN`` environment variable → raise. There is no fallback
+    to ``cfg["agent_login"]`` — that key was removed from the static
+    config in session 3.
+    """
     cfg = config or load_config(repo_root() / ".agent" / "config.json")
-    agent_login = cfg["agent_login"]
+    if agent_login is None:
+        agent_login = os.environ.get("AGENT_LOGIN") or None
+    if not agent_login:
+        raise RuntimeError(
+            "agent_login is required: pass it explicitly or set the "
+            "AGENT_LOGIN environment variable (typically populated by "
+            "the workflow from vars.AGENT_LOGIN, or by the agent "
+            "harness from mcp__github__get_me at session start)"
+        )
     agent_task_label = cfg.get("labels", {}).get("agent_task", "agent-task")
 
     if command not in cfg.get("commands", []):

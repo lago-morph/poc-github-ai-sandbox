@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import lock_and_sweep
 from tests.conftest import make_agent_meta
 
@@ -107,3 +109,38 @@ def test_preserves_agent_authored_comments(client, base_config):
     lock_and_sweep.run(client, n, config=base_config)
     bodies = sorted(c["body"] for c in client.list_comments(n))
     assert bodies == ["agent-1", "agent-2"]
+
+
+def test_run_uses_agent_login_from_env_when_not_passed(
+    client, base_config, monkeypatch
+):
+    """When ``agent_login`` is not passed and config lacks it, the env
+    var ``AGENT_LOGIN`` is the source of truth."""
+    monkeypatch.setenv("AGENT_LOGIN", "env-login")
+    issue = _seed(client, user="env-login")
+    cfg = dict(base_config)
+    cfg.pop("agent_login", None)  # mirror the file's actual shape
+    res = lock_and_sweep.run(client, issue["number"], config=cfg)
+    assert res["action"] == "labeled"
+
+
+def test_run_raises_when_agent_login_unresolved(client, base_config, monkeypatch):
+    """No explicit arg, no env var, no config key → clear error."""
+    monkeypatch.delenv("AGENT_LOGIN", raising=False)
+    cfg = dict(base_config)
+    cfg.pop("agent_login", None)
+    issue = _seed(client, user="anyone")
+    with pytest.raises(RuntimeError, match="agent_login is required"):
+        lock_and_sweep.run(client, issue["number"], config=cfg)
+
+
+def test_run_explicit_arg_wins_over_env(client, base_config, monkeypatch):
+    """Explicit ``agent_login`` argument takes precedence over the env var."""
+    monkeypatch.setenv("AGENT_LOGIN", "env-login")
+    issue = _seed(client, user="explicit-login")
+    cfg = dict(base_config)
+    cfg.pop("agent_login", None)
+    res = lock_and_sweep.run(
+        client, issue["number"], agent_login="explicit-login", config=cfg,
+    )
+    assert res["action"] == "labeled"

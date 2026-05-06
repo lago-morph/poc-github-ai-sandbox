@@ -1110,3 +1110,59 @@ def test_main_validate_summary_invalid_json(capsys):
         "--command", "echo", "--status", "completed",
     ])
     assert code != 0
+
+
+# ---------------------------------------------------------------------------
+# CLI: make-ack subcommand
+# ---------------------------------------------------------------------------
+
+def test_cli_make_ack_happy():
+    cp = _run_cli("make-ack", "--ack-for", "42")
+    env = json.loads(cp.stdout)
+    assert env["protocol_version"] == 1
+    assert env["kind"] == "agent-ack"
+    assert env["ack_for"] == 42
+    assert env["agent_acked_at"].endswith("Z")
+
+
+def test_cli_make_ack_with_optional_fields():
+    cp = _run_cli(
+        "make-ack",
+        "--ack-for", "7",
+        "--agent-id", "A1",
+        "--session-id", "S1",
+        "--note", "follow-up",
+    )
+    env = json.loads(cp.stdout)
+    assert env["agent_id"] == "A1"
+    assert env["session_id"] == "S1"
+    assert env["note"] == "follow-up"
+
+
+def test_cli_make_ack_rejects_zero_ack_for():
+    cp = _run_cli("make-ack", "--ack-for", "0", expect_zero=False)
+    assert cp.returncode != 0
+    err = json.loads(cp.stderr.strip().splitlines()[-1])
+    assert "ack_for" in err["error"]
+
+
+def test_cli_make_ack_rejects_negative_ack_for():
+    cp = _run_cli("make-ack", "--ack-for", "-3", expect_zero=False)
+    assert cp.returncode != 0
+
+
+def test_cli_make_ack_requires_ack_for():
+    cp = _run_cli("make-ack", expect_zero=False)
+    # argparse error on missing required arg → non-zero exit.
+    assert cp.returncode != 0
+
+
+def test_main_make_ack_happy(capsys):
+    """Exercise the in-process main() path for coverage."""
+    from agent_lib import cli
+    rc = cli.main(["make-ack", "--ack-for", "5"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    env = json.loads(out)
+    assert env["ack_for"] == 5
+    assert env["kind"] == "agent-ack"

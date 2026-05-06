@@ -1,6 +1,5 @@
 {
   "protocol_version": 1,
-  "agent_login": "jonathanmanton",
   "labels": {
     "agent_task": "agent-task",
     "runner_failure": "runner-failure"

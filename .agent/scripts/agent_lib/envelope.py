@@ -85,4 +85,38 @@ def make_request_envelope(
     }
 
 
-__all__ = ["EnvelopeArgsInvalid", "make_request_envelope"]
+def make_ack_envelope(
+    ack_for: int,
+    *,
+    agent_acked_at: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    note: Optional[str] = None,
+) -> dict[str, Any]:
+    """Construct an agent-ack follow-up comment envelope.
+
+    ``ack_for`` is the comment_id of the original batch-job-request whose
+    terminal envelope this comment acknowledges (SPEC §5.2). The
+    handler treats agent-ack comments as informational; the
+    working->finished gate (SPEC §4.1) accepts EITHER an in-place
+    ``agent_ack: finished`` on the request comment OR a follow-up
+    ``kind: agent-ack`` comment with ``ack_for`` matching the request.
+    """
+    if not isinstance(ack_for, int) or isinstance(ack_for, bool) or ack_for < 1:
+        raise ValueError("ack_for must be a positive integer (comment_id)")
+    env: dict[str, Any] = {
+        "protocol_version": 1,
+        "kind": "agent-ack",
+        "ack_for": ack_for,
+        "agent_acked_at": agent_acked_at or _common.iso_now(),
+    }
+    if agent_id is not None:
+        env["agent_id"] = agent_id
+    if session_id is not None:
+        env["session_id"] = session_id
+    if note is not None:
+        env["note"] = note
+    return env
+
+
+__all__ = ["EnvelopeArgsInvalid", "make_request_envelope", "make_ack_envelope"]

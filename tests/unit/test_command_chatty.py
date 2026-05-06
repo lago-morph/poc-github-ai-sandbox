@@ -1,12 +1,15 @@
 """Tests for the ``chatty`` command (``.agent/commands/chatty.py``).
 
-The handler emits many log records. With the default
-``max_chunk_bytes_compressed=524288`` and ``lines=20000`` (default),
-the LogWriter should rotate at least two chunks.
+The handler emits many log records. The chatty command itself overrides
+the LogWriter rotation threshold to a small default (8192 bytes) at the
+top of ``run()`` so that rotation fires reliably with a modest line
+count. The production default
+(``logs.max_chunk_bytes_compressed: 524288``) is preserved for non-test
+commands.
 
 For unit-test speed we mostly run with a small ``lines`` value plus a
-tightened chunk size to verify rotation logic without paying for 20k
-lines on every test run.
+tightened chunk size to verify rotation logic without paying for
+hundreds or thousands of lines on every test run.
 """
 
 from __future__ import annotations
@@ -60,7 +63,7 @@ def test_chatty_direct_emits_requested_lines():
     assert "50" in summary["message"]
 
 
-def test_chatty_direct_default_lines_is_20000_but_we_pass_few():
+def test_chatty_direct_zero_lines_produces_no_chunks():
     mod = _load_chatty_module()
     lw = common.LogWriter()
     summary = mod.run({"lines": 0}, lw, workspace=None)
@@ -78,25 +81,91 @@ def test_chatty_direct_rejects_negative_treated_as_zero():
 
 def test_chatty_default_args_when_lines_missing():
     mod = _load_chatty_module()
-    # We don't actually want to run 20000 lines in unit tests; verify
-    # the function accepts an empty args dict and uses the default by
-    # checking the type/shape of the response without writing anything.
-    # We achieve this by passing ``lines=1`` to keep the run fast and
-    # asserting the default is wired (the schema declares minimum=0).
+    # We don't actually want to run 500 lines in unit tests; verify the
+    # function accepts an empty args dict by passing only ``lines=1`` to
+    # keep the run fast and assert that the default chatty behaviour
+    # (overriding the LogWriter threshold) is wired.
     lw = common.LogWriter()
     summary = mod.run({"lines": 1}, lw, workspace=None)
     assert summary["lines_emitted"] == 1
 
 
-def test_chatty_rotation_at_small_chunk_size():
-    """With a small max_chunk_bytes_compressed, rotation kicks in fast."""
+def test_chatty_overrides_log_writer_threshold_by_default():
+    """When called without ``max_chunk_bytes_compressed``, chatty lowers
+    the LogWriter threshold to its small default (8192) so a modest line
+    count rotates multiple chunks even though the production default
+    would not.
+    """
     mod = _load_chatty_module()
-    lw = common.LogWriter(max_chunk_bytes_compressed=512)
-    summary = mod.run({"lines": 200}, lw, workspace=None)
+    # Construct a LogWriter at the production threshold. If chatty did
+    # NOT override it, 500 lines (~ small number of bytes compressed)
+    # would not rotate.
+    lw = common.LogWriter(max_chunk_bytes_compressed=524_288)
+    summary = mod.run({"lines": 500}, lw, workspace=None)
+    chunks = lw.finalize()
+    assert summary["lines_emitted"] == 500
+    # The override (8192-byte threshold) must produce ≥2 chunks.
+    assert len(chunks) >= 2
+
+
+def test_chatty_explicit_max_chunk_bytes_compressed_arg_is_honored():
+    """Passing ``max_chunk_bytes_compressed`` overrides chatty's own
+    default: with a tiny threshold, even ~200 lines rotate."""
+    mod = _load_chatty_module()
+    lw = common.LogWriter(max_chunk_bytes_compressed=10_000_000)
+    summary = mod.run(
+        {"lines": 200, "max_chunk_bytes_compressed": 512},
+        lw,
+        workspace=None,
+    )
+    chunks = lw.finalize()
+    assert summary["lines_emitted"] == 200
+    assert len(chunks) >= 2
+
+
+def test_chatty_rotation_at_small_chunk_size():
+    """With a small max_chunk_bytes_compressed via args, rotation kicks
+    in fast."""
+    mod = _load_chatty_module()
+    lw = common.LogWriter(max_chunk_bytes_compressed=10_000_000)
+    summary = mod.run(
+        {"lines": 200, "max_chunk_bytes_compressed": 512},
+        lw,
+        workspace=None,
+    )
     chunks = lw.finalize()
     assert summary["lines_emitted"] == 200
     # Several chunks expected at this tiny rotation size.
     assert len(chunks) >= 2
+
+
+# ---------------------------------------------------------------------------
+# schema
+# ---------------------------------------------------------------------------
+
+def test_chatty_schema_accepts_max_chunk_bytes_compressed_arg():
+    schema = common.load_schema("commands/chatty.schema.json", REPO_ROOT)
+    args_schema = schema["properties"]["args"]
+    assert "max_chunk_bytes_compressed" in args_schema["properties"]
+    prop = args_schema["properties"]["max_chunk_bytes_compressed"]
+    assert prop["type"] == "integer"
+    assert prop["minimum"] == 1
+    # An envelope passing both args validates.
+    common.validate(
+        {"lines": 500, "max_chunk_bytes_compressed": 8192},
+        args_schema,
+    )
+
+
+def test_chatty_schema_rejects_zero_max_chunk_bytes_compressed():
+    """``max_chunk_bytes_compressed=0`` violates ``minimum: 1``."""
+    schema = common.load_schema("commands/chatty.schema.json", REPO_ROOT)
+    args_schema = schema["properties"]["args"]
+    with pytest.raises(ValueError):
+        common.validate(
+            {"lines": 1, "max_chunk_bytes_compressed": 0},
+            args_schema,
+        )
 
 
 # ---------------------------------------------------------------------------

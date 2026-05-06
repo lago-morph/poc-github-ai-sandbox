@@ -603,3 +603,167 @@ def test_poll_get_comment_failure_yields_no_parent_issue(client, fast_poll_confi
             config=fast_poll_config, sleep=adv_sleep, now=clock,
         )
     assert ei.value.kind == "runner_pickup_timeout"
+
+
+# ---------------------------------------------------------------------------
+# poll: ack_mode (SPEC §4.1)
+# ---------------------------------------------------------------------------
+
+def _seed_terminal_completed(client, sha):
+    """Seed a locked agent issue with a request comment that has already
+    been driven to ``run_status: completed`` (with summary.json on the
+    log branch). Returns ``(issue, comment_dict)``."""
+    issue, _ = _seed_locked_issue(client, agent_id="A")
+    c = _post_request(client, issue["number"], sha)
+    final_env = json.loads(c["body"])
+    final_env.update({
+        "run_status": "completed",
+        "run_started_at": common.iso_now(),
+        "run_finished_at": common.iso_now(),
+        "workflow_run_id": 7,
+        "checked_out_sha": sha,
+        "summary": {"echoed_args": {"message": "x"}, "message": "x"},
+        "log_manifest_branch": "_agent_runs",
+        "log_manifest_path": f"runs/{issue['number']}/{c['id']}/manifest.json",
+    })
+    client.update_comment(c["id"], json.dumps(final_env))
+    client.put_file_contents(
+        f"runs/{issue['number']}/{c['id']}/summary.json",
+        json.dumps({
+            "summary": final_env["summary"],
+            "run_status": "completed",
+        }).encode(),
+        "msg", "_agent_runs",
+    )
+    return issue, c
+
+
+def test_poll_ack_mode_default_is_inline(client, base_config):
+    """The legacy in-place ack form must still be the default."""
+    sha = client.create_branch("br")
+    issue, c = _seed_terminal_completed(client, sha)
+
+    out = poll_mod.poll(
+        client, comment_id=c["id"], command="echo",
+        config=base_config, sleep=_no_sleep, now=_ManualClock(),
+    )
+    assert out["envelope"]["agent_ack"] == "finished"
+    persisted = json.loads(client.get_comment(c["id"])["body"])
+    assert persisted["agent_ack"] == "finished"
+    all_comments = client.list_comments(issue["number"])
+    assert len(all_comments) == 1
+    assert "ack_comment_id" not in out
+
+
+def test_poll_ack_mode_inline_explicit(client, base_config):
+    sha = client.create_branch("br")
+    issue, c = _seed_terminal_completed(client, sha)
+    out = poll_mod.poll(
+        client, comment_id=c["id"], command="echo",
+        config=base_config, sleep=_no_sleep, now=_ManualClock(),
+        ack_mode="inline",
+    )
+    assert out["envelope"]["agent_ack"] == "finished"
+    persisted = json.loads(client.get_comment(c["id"])["body"])
+    assert persisted["agent_ack"] == "finished"
+    assert len(client.list_comments(issue["number"])) == 1
+
+
+def test_poll_ack_mode_follow_up_posts_new_comment(client, base_config):
+    """``ack_mode='follow_up'`` must NOT edit the request comment; it
+    must post a new ``kind: agent-ack`` comment with ``ack_for``
+    matching the original comment_id."""
+    sha = client.create_branch("br")
+    issue, c = _seed_terminal_completed(client, sha)
+    body_before = client.get_comment(c["id"])["body"]
+
+    out = poll_mod.poll(
+        client, comment_id=c["id"], command="echo",
+        config=base_config, sleep=_no_sleep, now=_ManualClock(),
+        ack_mode="follow_up",
+        issue_number=issue["number"],
+    )
+    body_after = client.get_comment(c["id"])["body"]
+    assert body_after == body_before
+    persisted = json.loads(body_after)
+    assert persisted.get("agent_ack") in (None, "")
+
+    all_comments = client.list_comments(issue["number"])
+    assert len(all_comments) == 2
+    ack_comment = next(
+        x for x in all_comments if x["id"] != c["id"]
+    )
+    parsed_ack = json.loads(ack_comment["body"])
+    assert parsed_ack["kind"] == "agent-ack"
+    assert parsed_ack["ack_for"] == c["id"]
+    assert parsed_ack["protocol_version"] == 1
+    assert parsed_ack["agent_acked_at"].endswith("Z")
+
+    assert out.get("ack_comment_id") == ack_comment["id"]
+
+
+def test_poll_ack_mode_follow_up_uses_get_comment_issue_number(client, base_config):
+    """When ``issue_number`` is omitted, poll() should fall back to the
+    parent_issue_number it captured earlier from get_comment()."""
+    sha = client.create_branch("br")
+    issue, c = _seed_terminal_completed(client, sha)
+
+    out = poll_mod.poll(
+        client, comment_id=c["id"], command="echo",
+        config=base_config, sleep=_no_sleep, now=_ManualClock(),
+        ack_mode="follow_up",
+    )
+    all_comments = client.list_comments(issue["number"])
+    assert len(all_comments) == 2
+    assert out.get("ack_comment_id") is not None
+
+
+def test_poll_ack_mode_follow_up_raises_when_no_issue_number(
+    client, base_config, monkeypatch
+):
+    """If both the explicit ``issue_number`` AND the get_comment lookup
+    fail to surface one, poll() must raise rather than silently swallow."""
+    sha = client.create_branch("br")
+    _issue, c = _seed_terminal_completed(client, sha)
+
+    real_get = client.get_comment
+
+    def stripping_get(cid):
+        out = dict(real_get(cid))
+        out.pop("issue_number", None)
+        return out
+
+    monkeypatch.setattr(client, "get_comment", stripping_get)
+    with pytest.raises(ValueError):
+        poll_mod.poll(
+            client, comment_id=c["id"], command="echo",
+            config=base_config, sleep=_no_sleep, now=_ManualClock(),
+            ack_mode="follow_up",
+        )
+
+
+def test_poll_ack_mode_invalid_value_raises(client, base_config):
+    sha = client.create_branch("br")
+    _issue, c = _seed_terminal_completed(client, sha)
+    with pytest.raises(ValueError):
+        poll_mod.poll(
+            client, comment_id=c["id"], command="echo",
+            config=base_config, sleep=_no_sleep, now=_ManualClock(),
+            ack_mode="bogus",
+        )
+
+
+def test_poll_ack_false_skips_both_forms(client, base_config):
+    """With ack=False, neither form should fire even when ack_mode is
+    set to follow_up."""
+    sha = client.create_branch("br")
+    issue, c = _seed_terminal_completed(client, sha)
+    body_before = client.get_comment(c["id"])["body"]
+    out = poll_mod.poll(
+        client, comment_id=c["id"], command="echo",
+        config=base_config, sleep=_no_sleep, now=_ManualClock(),
+        ack=False, ack_mode="follow_up", issue_number=issue["number"],
+    )
+    assert client.get_comment(c["id"])["body"] == body_before
+    assert len(client.list_comments(issue["number"])) == 1
+    assert out.get("ack_comment_id") is None

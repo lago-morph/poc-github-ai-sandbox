@@ -92,15 +92,24 @@ runs/<issue-number>/<comment-id>/
 
 ## 3. Identities and access control
 
-- A single GitHub bot account (the agent identity) owns all agent-side writes. The login is recorded in `.agent/config.json` as `agent_login`.
-- All structured agent issues carry the label `agent-task`. The lock-and-sweep workflow applies this label.
+- A single GitHub bot account (the agent identity) owns all agent-side writes. The login is sourced at runtime — see §3.1 — never embedded as a literal in workflow YAML or other code.
+- All structured agent issues carry the label `agent-task`. The lock-and-sweep workflow applies this label at issue creation.
 - Agents only act on comments where `author == agent_login` AND the body parses as a valid envelope. Foreign comments are inert.
-- Workflow defense-in-depth: `batch-job-handler.yml` no-ops unless the issue carries `agent-task` and `comment.user.login == agent_login`.
-- After the issue's PR is merged, `close-on-merge` locks the issue as a tamper-prevention seal on the audit record.
+- Workflow defense-in-depth: `batch-job-handler.yml` no-ops unless the issue carries `agent-task` and `comment.user.login == agent_login`. This `if:`-clause filter is the protocol's injection guard against unauthenticated commenters; it is what makes the unlocked issue safe.
+- The issue is **not locked during the working lifecycle**. `close-on-merge` locks the issue post-merge as a tamper-prevention seal on the audit record once no further protocol writes are expected.
 
-**Intent.** Public repositories accept arbitrary issues and comments from anonymous users. The label + author filter is individually weak but jointly sufficient to make the protocol safe by default: the label distinguishes agent issues from human bug reports, and the author check blocks any injection by a non-bot identity. Foreign comments do not trigger the handler's `if:` clause, so they are inert.
+**Intent.** Public repositories accept arbitrary issues and comments from anonymous users. The label + author filter is individually weak but jointly sufficient to make the protocol safe by default: the label distinguishes agent issues from human bug reports, and the author check blocks any injection by a non-bot identity. Foreign comments do not trigger the handler's `if:` clause, so they are inert. Locking the issue earlier would block the batch-job-handler's own terminal envelope writes — `GITHUB_TOKEN` is denied write access to locked issues — so the lock is deferred to post-close, where it serves only as an audit seal.
 
-**Real-world correction (discovered during live POC runs).** The original draft locked agent issues at creation. In practice, GitHub refuses comments from `GITHUB_TOKEN` on locked issues — including the workflow's own terminal envelope writes. The handler is therefore unable to produce its required output if the issue is locked during processing. The corrected design: apply the `agent-task` label at creation (so the workflow's label check is satisfied) and **lock the issue only at close** (post-merge), turning the lock into an audit-tamper-prevention seal rather than an injection guard. The injection-guard role is filled by the workflow's author + label `if:` filter, which makes foreign comments inert without needing the lock.
+### 3.1 Sourcing `agent_login`
+
+The bot login is **not** stored in the static config. It is sourced at runtime from one of two channels, depending on where code is running:
+
+- **In a GitHub Actions workflow.** The workflow exposes the value via the `AGENT_LOGIN` environment variable, populated from the repo-level `vars.AGENT_LOGIN` (a one-time admin setup). Workflow `if:` guards reference `vars.AGENT_LOGIN` directly.
+- **In an agent harness.** The agent discovers its own login at session start by calling `mcp__github__get_me` (or the equivalent REST `GET /user`) and passes the resolved value through to the skill scripts (`submit.py`, `lock_and_sweep.py`) as an explicit parameter. As a fallback, the same `AGENT_LOGIN` environment variable is honored.
+
+Skill scripts apply the resolution order: explicit argument → `AGENT_LOGIN` environment variable → raise. There is no fallback to a static config key, and the absence of all three is a configuration error, not a soft default.
+
+**Intent.** Embedding the bot login in workflow YAML required a YAML edit to deploy the protocol to a different account, which is friction without payoff. Sourcing from `vars.AGENT_LOGIN` lets a repo admin point the protocol at any account in seconds; sourcing from `mcp__github__get_me` lets the agent harness self-configure without prior knowledge of the deployment.
 
 ## 4. State machines
 
@@ -122,8 +131,14 @@ States in body field `status`:
 - `working (stale) → working (new agent)`: a different agent reads `status_ts` older than `issue.stale_seconds` (default 7200), takes over with the same handshake as `null → working`. The displaced agent, if still alive, will discover on its next heartbeat that its `agent_id` is gone and must self-abandon.
 - `working → abandoned` if the primary gives up, or if a successor declines to continue (e.g. discovers a failed required dependency).
 - `working → finished` only when:
-  - every comment has `run_status` ∈ {`completed`, `error`, `parse_error`} AND `agent_ack == finished`, AND
+  - every batch-job-request comment has `run_status` ∈ {`completed`, `error`, `parse_error`} AND has been **acknowledged**, AND
   - the PR for this issue exists.
+
+  A batch-job-request comment is **acknowledged** when EITHER form holds:
+  - **In-place form.** The request comment itself has `agent_ack == "finished"` (set by an agent that can edit comments — e.g. the workflow-side `poll.py` skill running with REST credentials).
+  - **Follow-up form.** A sibling comment on the same issue is a valid `kind: "agent-ack"` envelope (see §5.2.5) whose `ack_for` field equals the request comment's id. This is the form an MCP-only primary uses, because some MCP servers append a Claude Code trailer to every posted comment, which would invalidate an in-place edit's strict envelope shape.
+
+  The two forms are interchangeable: gate logic must accept either.
 
 Primary writes `finished`, posts a final comment summarising the work, then closes the issue.
 
@@ -218,7 +233,7 @@ The comment body is a JSON object with no surrounding prose. Two distinct shapes
   "kind": "batch-job-request",
   "command": "run-tests",
   "args": { "suite": "e2e", "shard": 11 },
-  "branch": "agent/42-add-rate-limit/sub-alpha",
+  "branch": "agent/42-add-rate-limit--sub-alpha",
   "commit_sha": "abc123def456...",
   "subagent_id": "alpha",
   "submitted_at": "2026-05-05T12:01:00Z",
@@ -235,7 +250,7 @@ The comment body is a JSON object with no surrounding prose. Two distinct shapes
   "kind": "batch-job-request",
   "command": "run-tests",
   "args": { "suite": "e2e", "shard": 11 },
-  "branch": "agent/42-add-rate-limit/sub-alpha",
+  "branch": "agent/42-add-rate-limit--sub-alpha",
   "commit_sha": "abc123def456...",
   "subagent_id": "alpha",
   "submitted_at": "2026-05-05T12:01:00Z",
@@ -253,11 +268,29 @@ The comment body is a JSON object with no surrounding prose. Two distinct shapes
 }
 ```
 
-After the agent reads the summary:
+After the agent reads the summary, it acknowledges the run via one of two forms (either form satisfies the working → finished gate; see §4.1):
+
+**In-place form** — agent edits the request comment:
 
 ```json
 { "...": "...", "agent_ack": "finished", "agent_acked_at": "2026-05-05T12:05:01Z" }
 ```
+
+**Follow-up form** — agent posts a separate comment with `kind: "agent-ack"`:
+
+```json
+{
+  "protocol_version": 1,
+  "kind": "agent-ack",
+  "ack_for": 1234567890,
+  "agent_acked_at": "2026-05-05T12:05:01Z",
+  "agent_id": "primary-1",
+  "session_id": "session-1",
+  "note": null
+}
+```
+
+`ack_for` is the comment id of the request being acknowledged. The follow-up form is the default for MCP-only primaries — see §5.2.5.
 
 #### 5.2.3 Branch + SHA semantics
 
@@ -291,6 +324,32 @@ If the comment body has neither `protocol_version` nor `kind` markers (e.g. a st
 JSON schema: `.agent/schemas/comment-envelope.schema.json`.
 
 **Intent.** Editing the comment in place rather than posting a new one keeps the 1-comment-per-job invariant. Preserving the original body under `original_body_b64` lets the agent (or a human) recover the original input verbatim. Distinguishing "no envelope at all" from "malformed envelope" prevents the protocol from polluting issues with parse_error records for non-protocol comments.
+
+#### 5.2.5 Agent-ack envelope (`kind: "agent-ack"`)
+
+A second envelope shape lives alongside `batch-job-request`. It is posted as a *new* comment that acknowledges a prior request without editing it.
+
+```json
+{
+  "protocol_version": 1,
+  "kind": "agent-ack",
+  "ack_for": 1234567890,
+  "agent_acked_at": "2026-05-05T12:05:01Z",
+  "agent_id": "primary-1",
+  "session_id": "session-1",
+  "note": null
+}
+```
+
+Required fields: `protocol_version`, `kind`, `ack_for`, `agent_acked_at`. `agent_id`, `session_id`, and `note` are optional.
+
+The handler **MUST** treat agent-ack comments as informational and produce no run for them. Implementations dispatch on `kind` before envelope-schema validation: an agent-ack comment is not a malformed batch-job-request, and writing a `parse_error` for it would be incorrect.
+
+The working → finished gate (§4.1) accepts an agent-ack comment whose `ack_for` matches the request comment's id as equivalent to an in-place `agent_ack: "finished"` on the request itself.
+
+JSON schema: `.agent/schemas/comment-ack-envelope.schema.json`.
+
+**Intent.** MCP-only primaries cannot guarantee a strict envelope shape on edit (some MCP servers append a Claude Code trailer), and an in-place edit can race with the workflow's own writes if the comment-id is reused. A separate ack comment is append-only, never collides with the workflow's writer window, and remains valid regardless of what trailer the MCP transport adds. The in-place form remains supported for skill scripts running with REST credentials directly.
 
 ### 5.3 Per-command schemas
 
@@ -391,7 +450,6 @@ JSON schema: `.agent/schemas/log-manifest.schema.json`.
 ```json
 {
   "protocol_version": 1,
-  "agent_login": "my-bot",
   "labels": {
     "agent_task": "agent-task",
     "runner_failure": "runner-failure"
@@ -416,7 +474,7 @@ JSON schema: `.agent/schemas/log-manifest.schema.json`.
   },
   "branches": {
     "feature_pattern": "agent/<issue>-<slug>",
-    "subagent_pattern": "<feature_branch>/sub-<subagent_id>"
+    "subagent_pattern": "<feature_branch>--sub-<subagent_id>"
   },
   "commands": ["run-tests", "build", "deploy-staging"]
 }
@@ -426,13 +484,15 @@ Both workflows and skills load this file. It is the single source of truth for t
 
 ## 6. Branching model
 
-- **Feature branch** `agent/<issue>/<slug>` is created from `base_branch` at issue creation. PR target is `base_branch`; PR head is the feature branch.
-- **Subagent branch** `agent/<issue>/<slug>/sub-<subagent_id>` is created from the current tip of the feature branch when the primary dispatches a subagent. All of that subagent's commits land here.
+- **Feature branch** `agent/<issue>-<slug>` is created from `base_branch` at issue creation. PR target is `base_branch`; PR head is the feature branch.
+- **Subagent branch** `<feature_branch>--sub-<subagent_id>` (double-dash separator) is created from the current tip of the feature branch when the primary dispatches a subagent. All of that subagent's commits land here.
 - A subagent may submit multiple batch jobs against its branch, with new commits between them. Each comment pins to `branch + commit_sha`; commits made *after* `agent_ack` belong to subsequent comments by the same subagent.
 - The primary, before opening the PR, merges all subagent branches into the feature branch in an order it chooses. Merge conflicts are the primary's responsibility.
-- Subagent branches are deleted after the PR is opened.
+- Subagent branches are deleted after the PR is merged (by `close-on-merge.yml`).
 
 **Intent.** Branches are the human-readable mechanism for "what work happened where"; SHAs are the verification mechanism. Per-subagent branches make parallel subagents non-conflicting at the git layer. Per-subagent (rather than per-comment) granularity lets a subagent's iteration commits between jobs naturally chain on the same branch.
+
+The `--sub-` separator is **not** a slash. Git refs share the filesystem hierarchy, so a single-slash form like `<feature>/sub-<id>` collides with `<feature>` when both refs need to coexist (you cannot have a ref named both `agent/foo` and `agent/foo/bar` — the first becomes a directory the moment the second exists). Double-dash sidesteps the collision while remaining human-readable.
 
 ## 7. Workflows
 
@@ -463,7 +523,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
+          AGENT_LOGIN: ${{ vars.AGENT_LOGIN }}
 ```
+
+`AGENT_LOGIN` is sourced from a repo-level GitHub Actions variable (§3.1). The script raises a clear error if the variable is unset.
 
 Script behaviour:
 1. Fetch the issue. Parse `agent-meta` from the body.
@@ -471,7 +534,7 @@ Script behaviour:
 3. Apply `agent-task` label.
 4. List existing comments (sweeping any that snuck in before the label was applied). Delete comments not authored by `agent_login`. Comments authored by `agent_login` are unexpected at this stage but left alone (an agent sending a job before label-apply is a protocol bug, not an attack).
 
-> **Note on locking.** Earlier drafts of this spec had `lock-and-sweep` lock the issue at this point. We removed that step: locking the issue blocks the batch-job-handler from writing its terminal envelope back (GitHub refuses comments from `GITHUB_TOKEN` on locked issues). The lock is now applied by `close-on-merge.yml` once the PR is merged. See §3 "Real-world correction".
+`lock-and-sweep` does **not** lock the issue. Locking is performed by `close-on-merge.yml` after the PR is merged (§3, §7.3). During the working lifecycle the issue must remain unlocked because `GITHUB_TOKEN` is denied write access to locked issues, which would break the batch-job-handler's own terminal envelope writes. The injection-guard role is filled by the batch-job-handler's `if:` clause (label + author).
 
 **Intent.** Pre-label comment deletion is the workflow's responsibility because the MCP transport may not expose comment deletion. The workflow uses REST inside the runner — the no-API constraint applies to agents, not workflows.
 
@@ -507,7 +570,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           COMMENT_ID: ${{ github.event.comment.id }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          AGENT_LOGIN: ${{ vars.AGENT_LOGIN }}
 ```
+
+The `if:` clause references `vars.AGENT_LOGIN` directly. The handler step also receives `AGENT_LOGIN` so any nested helpers (self-diagnostic posting, recovery checks) can reuse the same value without re-reading repo metadata.
 
 `handler.py` flow:
 1. Fetch the comment. Parse the envelope.
@@ -550,6 +617,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          AGENT_LOGIN: ${{ vars.AGENT_LOGIN }}
 ```
 
 The script:
@@ -559,6 +627,42 @@ The script:
 4. Locks the issue (`PUT /repos/{owner}/{repo}/issues/{n}/lock`) once the close-and-final-comment step has succeeded. This is idempotent: if the issue is already locked, the lock is left as-is.
 
 **Intent.** Closing on merge is mechanically separate from the agent's `finished` write because human reviewers may sit on the PR for an arbitrary time. The agent's responsibility ends at PR creation; merge-time closure is a property of the repo's review process. Locking is performed here (rather than at issue creation) because the batch-job-handler needs to keep writing terminal envelopes throughout the working lifecycle, and `GITHUB_TOKEN` cannot comment on locked issues. After close, the lock acts as a tamper-prevention seal on the audit record.
+
+### 7.4 Self-diagnostic comments
+
+Workflow run logs on a public GitHub repository are auth-walled: an agent operating through MCP cannot read them, even when the rest of the repository is public. To remain debuggable from MCP-only transports, every workflow script in this protocol posts a **self-diagnostic comment** on the originating issue when it crashes with an uncaught exception.
+
+#### When to emit
+
+Each `__main__` entry point (`handler.py`, `lock_and_sweep.py`, `close_on_merge.py`, and any new workflow script) wraps its top-level call in `try/except`. On `Exception`:
+
+1. The script logs the traceback to stderr (so it appears in workflow logs for anyone with runner access).
+2. It POSTs a self-diagnostic comment to the originating issue (or, for `close_on_merge.py`, to the issue named in `Closes #N`; falling back to the PR number if no `Closes` reference is found).
+3. The diagnostic POST is itself wrapped in `try/except` so a failure here cannot mask the underlying exit code.
+4. Emission is gated by `HANDLER_DEBUG_COMMENT` (default `"1"`); set it to `"0"` to suppress diagnostics in environments where workflow logs are accessible.
+
+#### Comment shape
+
+The body is markdown (NOT a JSON envelope — diagnostics are advisory, not protocol comments). It includes:
+
+- A bolded title: `**<script>.py self-diagnostic — uncaught exception**`.
+- A bullet list of context fields: script name, originating issue or PR number, comment id (if applicable), workflow run id, Python version, and any caller-supplied `extra_fields`.
+- A code-fenced one-line `repr()` of the exception.
+- A `<details>`-collapsed full traceback (so the comment thread stays scannable).
+- A `<details>`-collapsed environment-variable summary. Secrets (`GH_TOKEN`, `GITHUB_TOKEN`) are reported only as `set`/`unset`; their values are NEVER echoed. Non-secret env vars are shown via `repr()`.
+
+The diagnostic is POSTed via `requests.post` directly against the REST API rather than going through any of the protocol's own helpers; this prevents a bug in the helpers from masking the diagnostic for the very crash it caused.
+
+#### Consumer expectations
+
+Diagnostic comments are advisory. They are NOT protocol envelopes — they have no `protocol_version`, no `kind`, and no `agent-meta` block. The batch-job-handler's parse logic ignores comments without protocol markers, so a diagnostic does not interact with the protocol state machine.
+
+Operators (human or AI) reading an issue can:
+- Identify diagnostics by the bolded title `**<script>.py self-diagnostic — uncaught exception**`.
+- Decode the embedded traceback for triage.
+- Cross-reference workflow run id with the run page (where logs are available to repo-write users).
+
+**Intent.** A workflow that crashes silently is unrecoverable from MCP-only transports because MCP cannot read run logs. The self-diagnostic pattern keeps the failure mode visible to the same channel the protocol itself uses (issue comments), and the dual-write to stderr + comment ensures both runner-log readers and MCP-only readers see the same evidence. Secrets are filtered at emit time so the audit trail does not leak credentials on a public repo.
 
 ## 8. Polling and heartbeat schedule
 
@@ -602,7 +706,11 @@ Submit one batch job from an active issue and return the result. Independent of 
 4. **Runner-pickup deadline.** If `run_status == null` after `comment.runner_pickup_timeout_seconds`, open a new issue labeled `runner-failure` containing the original comment id, the workflow file SHA on default branch at submission time, and the request envelope. Raise to caller.
 5. **Running deadline.** If `run_status == running` past `comment.running_timeout_seconds`, same as above.
 6. **Terminal.** Fetch `summary.json` via `get_file_contents` from `_agent_runs`. Validate against the command's `summary_completed` or `summary_error` schema (defense in depth). Optionally fetch chunks if drilling in.
-7. **Ack.** Edit the comment to set `agent_ack: finished` and `agent_acked_at`. This is the only write the agent makes to the comment.
+7. **Ack.** Acknowledge the request in one of two forms (see §5.2.5):
+   - **Follow-up (default for MCP-only primaries).** Post a fresh comment whose body is a `kind: "agent-ack"` envelope with `ack_for` set to the request comment id and `agent_acked_at` set to now. The original request comment is not modified.
+   - **In-place (for skills running with REST credentials).** Edit the request comment to set `agent_ack: "finished"` and `agent_acked_at`. This is the only write the agent makes to the comment.
+
+   The working → finished gate accepts either form. Implementations choose based on transport: MCP transports that append a trailer (e.g. Claude Code's GitHub MCP) should default to the follow-up form so the original envelope's strict shape is preserved.
 8. **Return** the envelope and summary.
 
 ### 9.5 Implementation

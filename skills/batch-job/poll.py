@@ -144,6 +144,8 @@ def poll(
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
     ack: bool = True,
+    ack_mode: str = "inline",
+    issue_number: Optional[int] = None,
     heartbeat: Optional[Callable[[], None]] = None,
 ) -> dict[str, Any]:
     """Poll the comment until terminal. Returns ``{envelope, summary, summary_json}``.
@@ -155,7 +157,22 @@ def poll(
     AFTER the comment has been read (per SPEC §9.4 step 3) — typical
     callers use this to refresh ``status_ts`` on the parent issue while
     waiting for the runner.
+
+    ``ack_mode`` controls the form of the agent ack (SPEC §4.1):
+      - ``"inline"`` (default): edit the request comment in place setting
+        ``agent_ack: finished`` and ``agent_acked_at`` (legacy form).
+      - ``"follow_up"``: leave the request comment untouched and post a
+        NEW ``kind: agent-ack`` comment on the issue with
+        ``ack_for: comment_id``. Requires either ``issue_number`` to be
+        passed in or for the GitHub client to surface ``issue_number``
+        on the comment dict (the in-memory and REST clients both do).
+        When the follow-up form is used, the returned dict contains an
+        additional ``ack_comment_id`` key (the id of the new comment).
     """
+    if ack_mode not in ("inline", "follow_up"):
+        raise ValueError(
+            f"ack_mode must be 'inline' or 'follow_up', got {ack_mode!r}"
+        )
     cfg = config or load_config(repo_root() / ".agent" / "config.json")
     pickup_deadline = float(cfg["comment"].get("runner_pickup_timeout_seconds", 300))
     running_deadline = float(cfg["comment"].get("running_timeout_seconds", 3600))
@@ -262,13 +279,45 @@ def poll(
         pass
 
     # Ack ----------------------------------------------------------------
-    if ack and envelope.get("agent_ack") != "finished":
-        envelope["agent_ack"] = "finished"
-        envelope["agent_acked_at"] = iso_now()
-        client.update_comment(comment_id, json.dumps(envelope, indent=2))
+    ack_comment_id: Optional[int] = None
+    if ack:
+        if ack_mode == "inline":
+            if envelope.get("agent_ack") != "finished":
+                envelope["agent_ack"] = "finished"
+                envelope["agent_acked_at"] = iso_now()
+                client.update_comment(
+                    comment_id, json.dumps(envelope, indent=2)
+                )
+        else:  # ack_mode == "follow_up"
+            target_issue = issue_number
+            if target_issue is None:
+                # Fall back to the issue_number we read from the comment
+                # itself (parent_issue_number is captured at the top of
+                # poll() above).
+                target_issue = parent_issue_number
+            if target_issue is None:
+                raise ValueError(
+                    "ack_mode='follow_up' requires issue_number "
+                    "(client.get_comment did not surface it either)"
+                )
+            ack_env = {
+                "protocol_version": 1,
+                "kind": "agent-ack",
+                "ack_for": comment_id,
+                "agent_acked_at": iso_now(),
+            }
+            new_comment = client.add_comment(
+                target_issue, json.dumps(ack_env, indent=2)
+            )
+            ack_comment_id = (
+                new_comment.get("id") if isinstance(new_comment, dict) else None
+            )
 
-    return {
+    result: dict[str, Any] = {
         "envelope": envelope,
         "summary": summary,
         "summary_json": summary_json,
     }
+    if ack_mode == "follow_up":
+        result["ack_comment_id"] = ack_comment_id
+    return result

@@ -9,7 +9,8 @@
     "args": {
       "type": "object",
       "properties": {
-        "lines": { "type": "integer", "minimum": 0 }
+        "lines": { "type": "integer", "minimum": 0 },
+        "max_chunk_bytes_compressed": { "type": "integer", "minimum": 1 }
       },
       "additionalProperties": false
     },

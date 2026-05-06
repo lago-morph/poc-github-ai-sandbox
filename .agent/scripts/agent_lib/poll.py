@@ -77,9 +77,53 @@ def is_terminal(envelope: dict[str, Any]) -> bool:
     return _common.is_terminal_run_status(envelope.get("run_status"))
 
 
+def parse_ack_comment(body: str) -> Optional[dict[str, Any]]:
+    """If body is an agent-ack envelope, return parsed dict; else None.
+
+    Tolerates HTML-escaped bodies and trailing prose (matching the
+    parse_terminal_status conventions).
+    """
+    if not isinstance(body, str):
+        return None
+    unescaped = html.unescape(body).lstrip()
+    if not unescaped:
+        return None
+    try:
+        parsed, _idx = json.JSONDecoder().raw_decode(unescaped)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if parsed.get("protocol_version") != 1 or parsed.get("kind") != "agent-ack":
+        return None
+    return parsed
+
+
+def is_request_acked(
+    request_envelope: dict[str, Any],
+    request_comment_id: int,
+    other_comment_bodies: list[str],
+) -> bool:
+    """Return True if the request is acked via either form (SPEC §4.1).
+
+    EITHER ``request_envelope["agent_ack"] == "finished"`` (in-place form)
+    OR there is at least one comment in ``other_comment_bodies`` that is
+    a valid ``kind: agent-ack`` envelope with ``ack_for == request_comment_id``.
+    """
+    if request_envelope.get("agent_ack") == "finished":
+        return True
+    for body in other_comment_bodies:
+        ack = parse_ack_comment(body)
+        if ack and ack.get("ack_for") == request_comment_id:
+            return True
+    return False
+
+
 __all__ = [
     "parse_terminal_status",
     "summary_path_for",
     "manifest_path_for",
     "is_terminal",
+    "parse_ack_comment",
+    "is_request_acked",
 ]
