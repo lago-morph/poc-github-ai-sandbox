@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "echoed_args": {
+      "message": "hello world"
+    },
+    "message": "hello world"
+  },
+  "run_status": "completed",
+  "command": "echo",
+  "args": {
+    "message": "hello world"
+  },
+  "checked_out_sha": "00a2e84bbe2be007f51960234f8dc8acc73f62b9",
+  "started_at": "2026-05-06T05:36:53Z",
+  "finished_at": "2026-05-06T05:36:54Z"
+}
