@@ -163,9 +163,27 @@ The original session-2 calls (still in force):
 
 ### Step 3 — Drive deferred + regression-rerun the tested scenarios
 
-Not yet driven this session. Re-read `HANDOFF.md` (this file) §
-"Plan for the next session" Step 3 verbatim — the plan has not
-changed:
+**Not driven this session. Cannot be driven from this branch.**
+
+GitHub Actions workflow files for `issues.opened` and
+`issue_comment.created` events execute from the **default branch's**
+`.github/workflows/` checkout — not from a feature branch's checkout.
+The session-3 changes (new `agent-ack` envelope kind, new chatty
+defaults, `AGENT_LOGIN` env var sourcing, removal of `agent_login`
+from `.agent/config.json`) only land in the live system after this
+branch is merged to `main`. Driving scenarios from this branch would
+exercise main's pre-session-3 code, which is the same code session 1
+already validated — providing no incremental signal.
+
+**Pre-flight before next live run:**
+
+1. Merge `claude/implement-handoff-parallel-4d5AY` to `main`.
+2. Set `vars.AGENT_LOGIN = jonathanmanton` (or whichever bot account
+   the deployment uses) as a repo-level GitHub Actions variable.
+   Without this, the workflow `if:` clause never fires.
+3. Verify the merged main still passes `python -m pytest tests/ -q`.
+
+**Then drive:**
 
 - **Suggested deferred scenarios:** 08 (merge_conflict against the
   runner's actual `git merge`) and 10 (crash_recovery — needs a
@@ -178,6 +196,21 @@ changed:
   way to confirm.
 - **Bug-fix loop**: spec or code → unit test → log in
   `harness/RUNS.md` → rerun.
+
+**Expected new failure modes to watch for after merge:**
+
+- A scenario that posts the new `kind: "agent-ack"` follow-up form
+  must NOT trigger a `parse_error` from the workflow handler. (Main's
+  pre-session-3 handler would have parse-errored such comments because
+  it had no kind dispatch.)
+- Scenarios calling `chatty` should now default to lines=500 with the
+  per-invocation chunk threshold of 8192 — old scenario doc text or
+  old envelope payloads that pass `lines=20000` would still work, but
+  the rotation behavior changed.
+- Workflows that don't receive `AGENT_LOGIN` env var (because admin
+  forgot to set `vars.AGENT_LOGIN`) will now fail loudly with a
+  `RuntimeError` instead of silently mis-comparing — this is intended
+  but a fresh deployment will need the variable set.
 
 Work the plan top to bottom. Re-run the unit tests after each step
 and update this HANDOFF.md at the end of each step so the next agent
