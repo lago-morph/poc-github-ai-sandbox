@@ -1,0 +1,15 @@
+{
+  "summary": {
+    "lines_emitted": 500,
+    "message": "chatty emitted 500 lines"
+  },
+  "run_status": "completed",
+  "command": "chatty",
+  "args": {
+    "lines": 500,
+    "max_chunk_bytes_compressed": 8192
+  },
+  "checked_out_sha": "c0f4ff0f9e197dd4ad5f007bc50797524de6070e",
+  "started_at": "2026-05-06T05:40:07Z",
+  "finished_at": "2026-05-06T05:40:08Z"
+}
