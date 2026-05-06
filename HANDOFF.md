@@ -342,18 +342,22 @@ Possible future work, in rough priority order:
 ## Default plan if the user gives no specific direction
 
 1. Read `AGENTS.md` and this file.
-2. Run the unit tests to confirm nothing has regressed:
+2. Run the unit + e2e tests to confirm nothing has regressed:
    ```
    cd /home/user/poc-github-ai-sandbox
    python -m pytest tests/ -q --tb=short
    ```
-   Expect 386 passing.
-3. Start at the top of §"Plan for the next session" — Step 1
-   (subagent-ack comment kind). Don't skip ahead; later steps depend
-   on the ack semantics landing first.
-4. Update this HANDOFF.md at the end of each step with what changed
-   (per §"Provenance" — the file is the project's current-state
-   document).
+   Expect **446 passing** (session 3 baseline). Coverage ≈93% across
+   `.agent/`, `skills/`, and `harness/lib/`.
+3. The four-step plan from session 2 is **fully done and live-validated**
+   (see §"What's working" and §"Step 3 — Live regression + new
+   scenarios"). There is no urgent open work. If the user has not
+   given a specific direction, pick from §"Open work (next session
+   picks up here)" — items there are roughly priority-ordered, but
+   each is genuinely optional.
+4. Update this HANDOFF.md at the end of each session with what
+   changed (per §"Provenance" — the file is the project's
+   current-state document).
 
 ## Provenance
 
@@ -367,8 +371,15 @@ that built and live-tested the POC. It's the synthesis of:
 - The retrospective skill specs in `retrospective/`
 
 Updated in session 2 with the user's decisions on the open priority
-queue and the resulting four-step plan above. PR #50 / #51 (skill
-specs) confirmed merged.
+queue and the resulting four-step plan. PR #50 / #51 (skill specs)
+confirmed merged.
+
+Updated in session 3 (PR #54) with the implementation of the
+four-step plan, then again (PR #75) with the live regression /
+new-scenario results: 11/11 PASS, two new bugs fixed inline
+(PR #56 `vars.AGENT_LOGIN` fallback, PR #68 `_retry_put` backoff).
+The default-plan and "Open work" sections were rewritten to reflect
+that the v1 spec is now feature-complete and live-validated.
 
 Update this file at the start of each new session with what's
 changed; treat it as the project's current-state document.
