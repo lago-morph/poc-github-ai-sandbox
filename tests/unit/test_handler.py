@@ -651,3 +651,115 @@ def test_concurrent_terminal_writes_idempotent(
     chunks_after = sorted(p for p in files_after if p.startswith(f"{log_dir}/log-"))
     # No new chunk files for this run dir.
     assert chunks_after == chunks_before
+
+
+# ---------------------------------------------------------------------------
+# _retry_put — concurrent-write race protection
+#
+# Scenario 02 (multi-subagent) surfaced live: three concurrent handlers
+# writing to ``_agent_runs`` raced; one of them got 422 Unprocessable
+# Entity from the GitHub PATCH-ref API. The retry loop in ``_retry_put``
+# called ``put_file_contents`` again (which DID re-fetch head_sha) but
+# without ANY backoff between attempts — three concurrent writers all
+# retrying instantly continued to race. Outcome: comment stuck in
+# ``running`` because the workflow crashed before writing the terminal
+# envelope.
+# ---------------------------------------------------------------------------
+
+def test_retry_put_succeeds_after_transient_failures(monkeypatch):
+    """If put_file_contents fails twice then succeeds, _retry_put returns."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(handler.time, "sleep", sleeps.append, raising=False) if hasattr(handler, "time") else None
+
+    calls = {"n": 0}
+
+    class _StubClient:
+        def put_file_contents(self, path, content, message, branch):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise RuntimeError(f"422-like transient (attempt {calls['n']})")
+            return {"path": path, "branch": branch}
+
+    client = _StubClient()
+    handler._retry_put(client, "x.json", b"{}", "msg", "_agent_runs", retries=5)
+    assert calls["n"] == 3
+
+
+def test_retry_put_raises_after_exhausting_retries():
+    """If every attempt fails, _retry_put surfaces the last exception."""
+    calls = {"n": 0}
+
+    class _AlwaysFail:
+        def put_file_contents(self, path, content, message, branch):
+            calls["n"] += 1
+            raise RuntimeError(f"persistent failure {calls['n']}")
+
+    client = _AlwaysFail()
+    with pytest.raises(RuntimeError, match=r"persistent failure"):
+        handler._retry_put(client, "x.json", b"{}", "msg", "_agent_runs", retries=4)
+    assert calls["n"] == 4
+
+
+def test_retry_put_calls_put_file_contents_each_attempt():
+    """The retry MUST go through put_file_contents (which refreshes
+    head_sha internally), not bypass it. Regression test: an earlier
+    sketch tried to cache head_sha across attempts."""
+    calls = []
+
+    class _RecordingClient:
+        def put_file_contents(self, path, content, message, branch):
+            calls.append((path, branch))
+            if len(calls) < 2:
+                raise RuntimeError("retry me")
+            return {"path": path, "branch": branch}
+
+    client = _RecordingClient()
+    handler._retry_put(client, "y.json", b"{}", "msg2", "_agent_runs", retries=5)
+    # Each attempt was a fresh put_file_contents call.
+    assert calls == [("y.json", "_agent_runs"), ("y.json", "_agent_runs")]
+
+
+def test_retry_put_sleeps_with_backoff_between_attempts(monkeypatch):
+    """REGRESSION (live scenario 02): concurrent writers raced because
+    _retry_put had no delay between retries. Fix: introduce backoff
+    (any positive sleep is sufficient for the contract; we assert at
+    least one sleep call between retries and that the sleep durations
+    are non-decreasing — exponential backoff is the spec)."""
+    sleeps: list[float] = []
+    monkeypatch.setattr(handler, "_retry_sleep", sleeps.append, raising=False)
+
+    calls = {"n": 0}
+
+    class _FailUntilThird:
+        def put_file_contents(self, path, content, message, branch):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise RuntimeError("transient")
+            return {}
+
+    handler._retry_put(_FailUntilThird(), "z.json", b"{}", "m", "_agent_runs", retries=5)
+    # Two failures means at least two backoff sleeps before the success.
+    assert len(sleeps) >= 2
+    # Backoff must be strictly positive.
+    assert all(s > 0 for s in sleeps)
+    # And non-decreasing (exponential or linear is acceptable).
+    assert sleeps == sorted(sleeps)
+
+
+def test_retry_put_default_retries_is_at_least_5(monkeypatch):
+    """REGRESSION: default retries=3 was empirically insufficient for
+    3 concurrent writers (live scenario 02 hit all 3 retries failing
+    in the same race window). Bumping the default to >=5 keeps the
+    fast-path while giving concurrent writers more chances to settle."""
+    monkeypatch.setattr(handler, "_retry_sleep", lambda _t: None, raising=False)
+    calls = {"n": 0}
+
+    class _AlwaysFail:
+        def put_file_contents(self, path, content, message, branch):
+            calls["n"] += 1
+            raise RuntimeError("transient")
+
+    with pytest.raises(RuntimeError):
+        # Call without passing retries= so we exercise the default.
+        handler._retry_put(_AlwaysFail(), "z.json", b"{}", "m", "_agent_runs")
+    assert calls["n"] >= 5
