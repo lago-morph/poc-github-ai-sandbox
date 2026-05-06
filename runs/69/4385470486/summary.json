@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "echoed_args": {
+      "message": "work-alpha"
+    },
+    "message": "work-alpha"
+  },
+  "run_status": "completed",
+  "command": "echo",
+  "args": {
+    "message": "work-alpha"
+  },
+  "checked_out_sha": "9dca351d795d71284d7872543bb574391f798477",
+  "started_at": "2026-05-06T05:52:17Z",
+  "finished_at": "2026-05-06T05:52:18Z"
+}
