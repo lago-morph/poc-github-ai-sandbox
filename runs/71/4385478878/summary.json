@@ -1,0 +1,16 @@
+{
+  "summary": {
+    "echoed_args": {
+      "message": "primary-1 work"
+    },
+    "message": "primary-1 work"
+  },
+  "run_status": "completed",
+  "command": "echo",
+  "args": {
+    "message": "primary-1 work"
+  },
+  "checked_out_sha": "6a3522e448335e5f66d4c56d278c8c531f504a7c",
+  "started_at": "2026-05-06T05:54:35Z",
+  "finished_at": "2026-05-06T05:54:36Z"
+}
