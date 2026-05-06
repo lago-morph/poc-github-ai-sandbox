@@ -1,0 +1,93 @@
+{
+  "protocol_version": 1,
+  "schema": {
+    "chunk_format": "jsonl-gz",
+    "fields": {
+      "ts": {
+        "type": "string",
+        "description": "ISO 8601"
+      },
+      "stream": {
+        "enum": [
+          "stdout",
+          "stderr",
+          "meta"
+        ]
+      },
+      "phase": {
+        "enum": [
+          "setup",
+          "exec",
+          "teardown"
+        ]
+      },
+      "data": {
+        "type": [
+          "string",
+          "object"
+        ]
+      }
+    }
+  },
+  "command": "chatty",
+  "args": {
+    "lines": 500,
+    "max_chunk_bytes_compressed": 8192
+  },
+  "checked_out_sha": "c0f4ff0f9e197dd4ad5f007bc50797524de6070e",
+  "started_at": "2026-05-06T05:40:07Z",
+  "finished_at": "2026-05-06T05:40:08Z",
+  "exit_code": 0,
+  "chunks": [
+    {
+      "path": "log-0001.jsonl.gz",
+      "bytes": 8257,
+      "lines": 55
+    },
+    {
+      "path": "log-0002.jsonl.gz",
+      "bytes": 8235,
+      "lines": 55
+    },
+    {
+      "path": "log-0003.jsonl.gz",
+      "bytes": 8263,
+      "lines": 55
+    },
+    {
+      "path": "log-0004.jsonl.gz",
+      "bytes": 8245,
+      "lines": 55
+    },
+    {
+      "path": "log-0005.jsonl.gz",
+      "bytes": 8246,
+      "lines": 55
+    },
+    {
+      "path": "log-0006.jsonl.gz",
+      "bytes": 8259,
+      "lines": 55
+    },
+    {
+      "path": "log-0007.jsonl.gz",
+      "bytes": 8248,
+      "lines": 55
+    },
+    {
+      "path": "log-0008.jsonl.gz",
+      "bytes": 8265,
+      "lines": 55
+    },
+    {
+      "path": "log-0009.jsonl.gz",
+      "bytes": 8238,
+      "lines": 55
+    },
+    {
+      "path": "log-0010.jsonl.gz",
+      "bytes": 788,
+      "lines": 5
+    }
+  ]
+}
