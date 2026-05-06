@@ -1,4 +1,4 @@
-# HANDOFF — picking up from session 3
+# HANDOFF — picking up from session 3 (post live testing)
 
 > If you're a new agent landing in this repo and there's no clear
 > ongoing task, this is your starting point. Read this whole file
@@ -6,22 +6,31 @@
 
 ## TL;DR
 
-Session 3 implemented the four steps queued at the end of session 2:
+Session 3 implemented the four steps from session 2's plan AND drove
+live regression + new scenarios. All four steps done. All 11 chosen
+live scenarios pass. Two new bugs surfaced during live testing and
+were fixed inline:
 
 - **Step 1 done.** `kind: "agent-ack"` envelope shipped (schema, handler
   dispatch, agent_lib helpers, CLI, follow-up-vs-inline ack on the
-  batch-job/poll skill, regression tests).
+  batch-job/poll skill, regression tests). **Validated live** in
+  scenarios 01, 02-retry, 10.
 - **Step 2 done.** `chatty` test command now lowers the LogWriter
   rotation threshold per-invocation (default 8 KiB, 500 lines), so
   rotation fires reliably under realistic line counts. Production
-  defaults (524 288 bytes) are untouched.
-- **Step 3 (live scenarios).** Not yet driven this session — see the
-  open work below.
-- **Step 4 done (all three sub-items).** `agent_login` removed from
-  `.agent/config.json`; sourced from `vars.AGENT_LOGIN` in CI and
-  `mcp__github__get_me` in agent harnesses (SPEC §3.1). Real-world
-  correction notes for §3 / §6 merged into the primary narrative.
-  Self-diagnostic-comment pattern promoted to a dedicated SPEC §7.4.
+  defaults (524 288 bytes) are untouched. **Validated live** in
+  scenario 12 (10 chunks at the new threshold vs 1 chunk in
+  session 1's `chatty(20000)`).
+- **Step 3 done.** 9 already-tested scenarios re-driven for regression;
+  2 new scenarios (08 merge_conflict, 10 crash_recovery) driven for
+  the first time. 11/11 PASS. Forensic artifacts preserved on
+  issues #57-#71 and PRs #58/#66/#72/#73.
+- **Step 4 done (all three sub-items).** `agent_login` indirection
+  removed from `.agent/config.json`; workflows source from
+  `vars.AGENT_LOGIN || 'jonathanmanton'` (PR #56 added the literal
+  fallback after live testing surfaced a deployment-friction bug).
+  Real-world correction notes for §3 / §6 merged into the primary
+  narrative. Self-diagnostic-comment pattern promoted to SPEC §7.4.
 - **Bonus.** `harness.lib` (naming + asserts helpers) was missing on
   `main`; the matching `tests/unit/test_harness_lib.py` was failing
   to even collect. Implemented during this session so the suite is
@@ -29,34 +38,80 @@ Session 3 implemented the four steps queued at the end of session 2:
 
 ## Current state snapshot
 
-- 437 unit + e2e tests passing.
-- All Step 1, 2, 4a/b/c work landed; Step 3 (live scenarios) deferred.
-- 7 real-world bugs from sessions 1–2 already merged; this session's
-  changes are spec-discipline, not new bug discoveries.
-- Forensic artifacts from prior live scenarios still preserved on the
-  real repo (issues #18, #21, #22, #23, #25, #26, #27, #28, #31;
-  merged PRs #19, #29, #30; `_agent_runs` orphan branch with manifests
-  + log chunks).
+- **446 unit + e2e tests passing** (was 348 baseline; +98 across
+  session 3 work + 9 bug-fix regression tests).
+- **11/11 live scenarios PASS** on 2026-05-06 against post-merge main.
+- **9 real-world bugs** total now caught + fixed across sessions
+  (7 from sessions 1–2, 2 new from session 3).
+- Forensic artifacts from session 3's live runs preserved on the real
+  repo (issues #55-#71; PRs #56, #58, #66, #68, #72, #73, #74; the
+  `_agent_runs` orphan branch carries new manifests under
+  `runs/{57,59-65,67,69-71}/`).
+- Forensic artifacts from prior sessions still preserved on the real
+  repo (issues #18, #21-#23, #25-#28, #31; merged PRs #19, #29, #30).
 - Skill specs (`retrospective/`) remain committed for reference; not
   implemented in this repo.
 
-For the full narrative, read `ITERATION_REPORT.md`.
+For the full narrative, read `ITERATION_REPORT.md` and
+`harness/RUNS.md` (the latter has session 3's live results).
 
 ## What's working (you can rely on these)
 
 - **All three workflows live**: `lock-and-sweep.yml`,
   `batch-job-handler.yml`, `close-on-merge.yml`. They run on real
   GitHub Actions runners and produce real artifacts.
+- **`vars.AGENT_LOGIN` with literal fallback.** Workflows source the
+  bot login from `${{ vars.AGENT_LOGIN || 'jonathanmanton' }}`. New
+  deployments override with their own repo variable; the canonical
+  repo works without any admin setup.
+- **`_retry_put` with jittered exponential backoff** (PR #68). Six
+  retries, 0.5/1/2/4/8/16s base × random `[0.5, 1.5)`. Covers the
+  concurrent-writer race on `_agent_runs` that scenario 02 surfaced.
 - **`RestGitHubClient`** in `.agent/scripts/rest_client.py` covers
   the full `GitHubClient` Protocol. 24 mocked HTTP tests.
 - **Workflow markers + self-diagnostic comment** patterns are baked
   in. Crashes leave readable evidence on the originating issue.
+  Validated again in session 3 — the diagnostic comment posted by
+  the beta subagent's crash is what made the `_retry_put` bug
+  diagnosable from MCP-only.
 - **Auto-delete branches on PR merge**: `close_on_merge.py` sweeps
   the head branch + any `<feature>--sub-*` siblings. Defensive
   namespace gates protect `main`, `_agent_runs`, etc.
 - **`agent_lib/` CLI**: pure-python helpers for envelope construction,
-  meta block transitions, terminal-status parsing. Used by the agent
-  side of live scenarios.
+  meta block transitions, terminal-status parsing, **and the new
+  `make-ack` subcommand** for the follow-up agent-ack form.
+- **Both ack forms** (in-place edit + follow-up `kind: "agent-ack"`
+  comment) are accepted by the working→finished gate. MCP-only
+  primaries default to the follow-up form.
+
+## Bugs fixed during session 3 live testing
+
+### Bug — `vars.AGENT_LOGIN` not set (PR #56)
+
+**Symptom:** First scenario 01 attempt (issue #55) stalled. `lock-and-sweep`
+ran but exited 1 silently with `missing env vars: ['AGENT_LOGIN']` because
+the canonical repo had not had the GitHub Actions repo variable set.
+Without the `agent-task` label, batch-job-handler also could not fire on
+subsequent comments.
+
+**Fix:** Add a YAML-level fallback `${{ vars.AGENT_LOGIN || 'jonathanmanton' }}`
+in all three workflow `env:` blocks and in the batch-job-handler
+`if:`-clause. Unit tests (`tests/unit/test_workflow_yamls.py`, 4 tests)
+pin the fallback string in each YAML so regression cannot reach main.
+
+### Bug — `_retry_put` no-backoff race (PR #68)
+
+**Symptom:** First scenario 02 retry (issue #67). Three concurrent
+echo-handler workflows ran in parallel; beta crashed with `422
+Unprocessable Entity` on the `_agent_runs` PATCH-ref API after
+exhausting all 3 retries in microseconds. Comment 4385451782 stuck in
+`run_status: "running"`. Workflow self-diagnostic comment surfaced the
+HTTP 422 traceback.
+
+**Fix:** Jittered exponential backoff in `_retry_put` (0.5/1/2/4/8/16s
+base × random `[0.5, 1.5)`), retries 3 → 6, sleep indirected through
+`_retry_sleep` so unit tests can stub it. 5 new regression tests
+(`tests/unit/test_handler.py::test_retry_put_*`).
 
 ## Decisions locked in (session 3)
 
@@ -67,6 +122,8 @@ additional calls during session 3:
   the static `agent_login` config key entirely; workflows source it
   from `vars.AGENT_LOGIN` and agent harnesses source it from
   `mcp__github__get_me`. (SPEC §3.1 documents the new contract.)
+  PR #56 added a literal fallback so the canonical repo works
+  without admin setting `vars.AGENT_LOGIN`.
 - **End-to-end gate** → both pytest e2e (`tests/e2e/`) AND live MCP
   scenarios (`harness/scenarios/`) count. Apply the bug-fix loop to
   failures from either layer.
@@ -159,76 +216,68 @@ The original session-2 calls (still in force):
   exclusion.
 - `tests/unit/test_harness_lib.py` now collects and passes (38 tests).
 
+## Step 3 — Live regression + new scenarios (DONE this session)
+
+After PR #54 merged session 3 to main, session 3 also drove all 11
+chosen live scenarios on 2026-05-06.
+
+**Live results — 11/11 PASS (full ledger in `harness/RUNS.md`):**
+
+| Scenario | Issue | PR | Result |
+|----------|-------|----|--------|
+| 01 happy_single_subagent | #57 | #58 | completed end-to-end |
+| 02 multi-subagent (1st)  | #67 | —   | **abandoned (bug → PR #68)** |
+| 02 multi-subagent (retry)| #69 | #73 | completed end-to-end |
+| 03 parse_error            | #61 | —   | parse_error (forensic) |
+| 04 sha_mismatch           | #62 | —   | error/branch_sha_mismatch (forensic) |
+| 05 unsupported_version    | #63 | —   | parse_error/unsupported_version (forensic) |
+| 06 unknown_command        | #64 | —   | error/unknown_command (forensic) |
+| 07 summary_schema_violation | #65 | — | error/summary_schema_violation (forensic) |
+| 08 merge_conflict (NEW)   | #70 | —   | abandoned (merge_conflict) |
+| 10 crash_recovery (NEW)   | #71 | #72 | completed end-to-end via takeover |
+| 12 huge_log               | #59 | #66 | completed (10 chunks at new threshold) |
+| 13 unicode_summary        | #60 | —   | completed (forensic, no PR) |
+
+**Skipped scenarios** (per session-2 plan): 09 failed_dependency,
+11 webhook_redelivery, 14 concurrent_claim, 15 stale_takeover.
+Reasons in `ITERATION_REPORT.md` Phase 4 "Scenarios deliberately
+not driven". Revisit only if a concrete use case appears.
+
+**Validations achieved live for the first time:**
+
+- Session 3's `kind: "agent-ack"` follow-up form (handler dispatches
+  on kind, gate accepts both forms).
+- Session 3's chatty defaults (10 chunks rotated under new threshold
+  vs 1 chunk under session 1's `chatty(20000)`).
+- `vars.AGENT_LOGIN || 'jonathanmanton'` fallback (PR #56).
+- `_retry_put` jittered exponential backoff (PR #68).
+
 ## Open work (next session picks up here)
 
-### Step 3 — Drive deferred + regression-rerun the tested scenarios
+There is no urgent open work right now. The protocol POC is feature-
+complete for the v1 spec; the four-step plan from session 2 is fully
+implemented and live-validated.
 
-**Not driven this session. Cannot be driven from this branch.**
+Possible future work, in rough priority order:
 
-GitHub Actions workflow files for `issues.opened` and
-`issue_comment.created` events execute from the **default branch's**
-`.github/workflows/` checkout — not from a feature branch's checkout.
-The session-3 changes (new `agent-ack` envelope kind, new chatty
-defaults, `AGENT_LOGIN` env var sourcing, removal of `agent_login`
-from `.agent/config.json`) only land in the live system after this
-branch is merged to `main`. Driving scenarios from this branch would
-exercise main's pre-session-3 code, which is the same code session 1
-already validated — providing no incremental signal.
-
-**Pre-flight before next live run:**
-
-1. Merge `claude/implement-handoff-parallel-4d5AY` to `main`.
-2. Set `vars.AGENT_LOGIN = jonathanmanton` (or whichever bot account
-   the deployment uses) as a repo-level GitHub Actions variable.
-   Without this, the workflow `if:` clause never fires.
-3. Verify the merged main still passes `python -m pytest tests/ -q`.
-
-**Then drive:**
-
-- **Suggested deferred scenarios:** 08 (merge_conflict against the
-  runner's actual `git merge`) and 10 (crash_recovery — needs a
-  `crash-after-N` test command in `.agent/commands/` first).
-- **Skip:** 09, 11, 14, 15.
-- **Regression-rerun the 9 already-tested scenarios.** Step 1 changed
-  ack semantics and Step 2 changed chatty defaults; the bi-form
-  working→finished gate and the new threshold are not exercised by
-  unit tests against real GitHub, so live verification is the only
-  way to confirm.
-- **Bug-fix loop**: spec or code → unit test → log in
-  `harness/RUNS.md` → rerun.
-
-**Expected new failure modes to watch for after merge:**
-
-- A scenario that posts the new `kind: "agent-ack"` follow-up form
-  must NOT trigger a `parse_error` from the workflow handler. (Main's
-  pre-session-3 handler would have parse-errored such comments because
-  it had no kind dispatch.)
-- Scenarios calling `chatty` should now default to lines=500 with the
-  per-invocation chunk threshold of 8192 — old scenario doc text or
-  old envelope payloads that pass `lines=20000` would still work, but
-  the rotation behavior changed.
-- Workflows that don't receive `AGENT_LOGIN` env var (because admin
-  forgot to set `vars.AGENT_LOGIN`) will now fail loudly with a
-  `RuntimeError` instead of silently mis-comparing — this is intended
-  but a fresh deployment will need the variable set.
-
-Work the plan top to bottom. Re-run the unit tests after each step
-and update this HANDOFF.md at the end of each step so the next agent
-inherits an accurate snapshot.
-
-The Step 1 / Step 2 / Step 4 work from session 2's queue is complete
-(see "What this session changed" above). What remains is **Step 3**:
-drive deferred scenarios + regression-rerun the tested ones, with
-specific attention to:
-
-- The new agent-ack follow-up form (default for MCP-only primaries).
-- The `vars.AGENT_LOGIN` variable being set on the live repo.
-- The `chatty` command now defaulting to `lines=500,
-  max_chunk_bytes_compressed=8192` — scenarios that called it with
-  the old `lines=20000` need updating before they run live.
-
-If `vars.AGENT_LOGIN` is not configured on the live repo, the workflow
-will need that one-time admin step before live scenarios can run.
+1. **Drive the four skipped scenarios** (09, 11, 14, 15) only when a
+   concrete need arises. Each requires non-trivial setup; the
+   in-memory pytest e2e suite already covers their state machines.
+2. **Implement the retrospective skill specs** in a separate repo
+   (per session 2's decision — they stay as specs here).
+3. **Backend-neutral API refactor** — see `proposals/agent-api-refactor/`
+   for the full brief. Bitbucket adapter is a worked example in
+   `proposals/bitbucket-adapter/`.
+4. **Add a `crash-after-N` test command** for a workflow-side crash
+   scenario distinct from scenario 10's primary-side crash. The
+   session 2 HANDOFF mentioned this as a prerequisite for scenario
+   10, but scenario 10 as written tests primary-crash recovery (no
+   workflow-side crash needed). A separate scenario for workflow
+   crash would round out the failure-mode coverage.
+5. **Schema evolution / protocol_version=2** — when a v2 envelope
+   shape becomes necessary, ship the v2 handler on main first, then
+   start emitting v2 envelopes. Per-command schemas independently
+   versioned via filename suffix.
 
 ## Things the next agent should NOT do
 
@@ -243,10 +292,18 @@ will need that one-time admin step before live scenarios can run.
   from reflog.)
 - **Don't trust unit tests as the bar for "done."** They only catch
   implementation defects. Spec defects and transport quirks need
-  live execution.
-- **Don't skip the regression rerun in step 3.** Step 1 changes ack
-  semantics; the only way to confirm nothing regressed is to re-drive
-  the 9 already-tested scenarios end-to-end.
+  live execution. Session 3 confirmed this twice: PR #56's
+  deployment-friction bug (`vars.AGENT_LOGIN` unset) and PR #68's
+  concurrent-writer race in `_retry_put` were both invisible to
+  unit tests — the live drive exposed them in minutes.
+- **Don't assume `vars.AGENT_LOGIN` is set on a fresh deployment.**
+  The workflow YAMLs include a literal fallback to `jonathanmanton`,
+  but new deployments still need to set the repo variable to point
+  at their own bot account.
+- **Don't remove the literal fallback in workflow YAMLs.** It's the
+  only thing keeping the canonical repo functional without admin
+  setup of `vars.AGENT_LOGIN`. New deployments override; the literal
+  is a safety net.
 
 ## Known traps (live and active right now)
 
