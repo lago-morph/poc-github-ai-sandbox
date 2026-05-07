@@ -72,24 +72,24 @@ README.md                  — this file
   batch-job-handler.yml    — issue_comment.created → run command (live; instrumented with markers)
   close-on-merge.yml       — pull_request.closed → close + lock + delete branches (live)
 
-skills/                    — agent-side skill packages (spec stage)
+skills/                    — agent-side skill packages (SKILL.md spec + helpers)
   batch-job/               — submit one job, await result (SKILL.md + Python helpers)
   task-dag/                — claim issue, plan subagents, merge, schedule successors
 
 harness/                   — live execution harness against real GitHub
   README.md                — harness conventions
   RUNS.md                  — forensic ledger of all live scenario runs
-  scenarios/01_*.md … 15_*.md  — 15 scenario specs (9 driven live, 6 spec-only)
-  lib/                     — naming + asserts helpers
+  scenarios/01_*.md … 15_*.md  — 15 scenario specs (11 driven live, 4 spec-only)
+  lib/                     — naming + asserts helpers (live)
   runs/                    — per-run touchstone files
 
-tests/                     — 386 tests, ≥95% coverage on .agent/ + skills/
+tests/                     — 446 tests, ~93% coverage on .agent/ + skills/ + harness/lib/
   unit/
   e2e/
   conftest.py
   requirements.txt
 
-retrospective/             — skill specs harvested from this session (PR #50)
+retrospective/             — skill specs harvested in session 1 (PR #50)
   README.md                — index of 9 skill specs + AGENTS.md template spec
   <skill>/README.md        — human motivation per skill
   <skill>/SPEC.md          — implementation-grade detail
@@ -99,16 +99,18 @@ retrospective/             — skill specs harvested from this session (PR #50)
 
 ## Status
 
-**End of session 1**: spec validated end-to-end against real GitHub.
+**End of session 3** (post live regression + new scenarios on 2026-05-06):
+spec validated end-to-end against real GitHub; the four-step plan from
+session 2 is fully implemented and live-validated.
 
 | | |
 |---|---|
-| Unit tests | 386 passing, ~95% coverage |
-| Live scenarios driven | 9 of 15 (issue numbers in `harness/RUNS.md`) |
-| Real-world bugs discovered + fixed | 7 |
-| Spec amendments | 3 (lock placement, branch separator, comment-trailer tolerance) |
-| PRs opened in this session | 50 |
-| Branches at end | 3 (main, `_agent_runs`, dispatcher's working branch) |
+| Unit + e2e tests | 446 passing, ~93% coverage on `.agent/`, `skills/`, `harness/lib/` |
+| Live scenarios driven | 11 of 15 (full ledger in `harness/RUNS.md`) |
+| Real-world bugs discovered + fixed | 9 (7 across sessions 1–2, 2 new in session 3) |
+| Spec amendments | 3 (lock placement, branch separator, comment-trailer tolerance) + 1 new section (§7.4 self-diagnostic comments) |
+| Total PRs opened in repo to date | 50 (numbers up to #75; gaps are issues) |
+| Active branches | `main`, `_agent_runs`, plus forensic `agent/harness-*` branches preserved from abandoned scenarios |
 
 The repository contains real, inspectable artifacts from each live
 scenario run. Click through `harness/RUNS.md` to see the issues,
