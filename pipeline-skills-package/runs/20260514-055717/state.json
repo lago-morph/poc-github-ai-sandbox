@@ -1,0 +1,26 @@
+{
+  "run_id": "20260514-055717",
+  "plan": "PLAN-PACKAGE.md",
+  "started_at": "2026-05-14T05:57:17Z",
+  "working_branch": "pipeline-skills-package/build-20260514-055717",
+  "unattended": true,
+  "max_parallel": 100,
+  "conflict_strategy": "fail",
+  "phases": [
+    {"name": "pre-flight", "status": "in_progress"},
+    {"name": "fanout-build", "status": "pending"},
+    {"name": "merge", "status": "pending"},
+    {"name": "build-bootstrap", "status": "pending"},
+    {"name": "contract-tests", "status": "pending"},
+    {"name": "retrospective", "status": "pending"},
+    {"name": "commit-push", "status": "pending"}
+  ],
+  "subtasks": [
+    {"id": "sub-01", "name": "batch-job",          "status": "pending", "branch": "pipeline-skills-package/build-20260514-055717--sub-01-batch-job"},
+    {"id": "sub-02", "name": "task-dag",           "status": "pending", "branch": "pipeline-skills-package/build-20260514-055717--sub-02-task-dag"},
+    {"id": "sub-03", "name": "orchestrate-issue",  "status": "pending", "branch": "pipeline-skills-package/build-20260514-055717--sub-03-orchestrate-issue"},
+    {"id": "sub-04", "name": "onboarding",         "status": "pending", "branch": "pipeline-skills-package/build-20260514-055717--sub-04-onboarding"},
+    {"id": "sub-05", "name": "composition-guide",  "status": "pending", "branch": "pipeline-skills-package/build-20260514-055717--sub-05-composition-guide"},
+    {"id": "sub-06", "name": "test-harness",       "status": "pending", "branch": "pipeline-skills-package/build-20260514-055717--sub-06-test-harness"}
+  ]
+}
