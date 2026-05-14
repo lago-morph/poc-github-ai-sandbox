@@ -10,12 +10,10 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
+/dist/
 downloads/
 eggs/
 .eggs/
-lib/
-!harness/lib/
 lib64/
 parts/
 sdist/
@@ -217,3 +215,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Claude Code worktree isolation directories (created by isolation: "worktree" agents)
+.claude/worktrees/
+
+# Bootstrap bundle build artifacts: ignore the binary tarball but commit
+# the recipe install.md and MANIFEST.txt for diffability.
+pipeline-skills-package/bootstrap/dist/*.tar.gz
+!pipeline-skills-package/bootstrap/dist/install.md
+!pipeline-skills-package/bootstrap/dist/MANIFEST.txt
+

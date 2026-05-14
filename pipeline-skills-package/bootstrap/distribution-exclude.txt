@@ -1,0 +1,21 @@
+# Files under pipeline-skills-package/ that must NOT appear in the
+# bootstrap bundle. Patterns are relative to the --source root passed
+# to build.py (typically pipeline-skills-package/).
+#
+# Directory patterns ending with / match the directory and everything inside.
+# Glob patterns (* and **) match path-by-path.
+
+# Build state and outputs
+runs/
+bootstrap/dist/
+bootstrap/build.py
+bootstrap/distribution-exclude.txt
+
+# POC-local plans and handoff (the new repo has its own NEW-REPO-PLAN.md)
+PLAN-PACKAGE.md
+RESUME.md
+
+# Python build / cache artefacts
+**/__pycache__/
+**/__pycache__/**
+**/*.pyc
