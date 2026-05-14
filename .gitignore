@@ -14,8 +14,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-!harness/lib/
 lib64/
 parts/
 sdist/
@@ -217,3 +215,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Claude Code worktree isolation directories (created by isolation: "worktree" agents)
+.claude/worktrees/
+
+# Bootstrap bundle build artifacts (tarball is binary; keep recipe optional)
+pipeline-skills-package/bootstrap/dist/*.tar.gz
+
