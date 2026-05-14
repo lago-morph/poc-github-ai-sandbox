@@ -10,7 +10,7 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
+/dist/
 downloads/
 eggs/
 .eggs/
@@ -219,6 +219,9 @@ __marimo__/
 # Claude Code worktree isolation directories (created by isolation: "worktree" agents)
 .claude/worktrees/
 
-# Bootstrap bundle build artifacts (tarball is binary; keep recipe optional)
+# Bootstrap bundle build artifacts: ignore the binary tarball but commit
+# the recipe install.md and MANIFEST.txt for diffability.
 pipeline-skills-package/bootstrap/dist/*.tar.gz
+!pipeline-skills-package/bootstrap/dist/install.md
+!pipeline-skills-package/bootstrap/dist/MANIFEST.txt
 
