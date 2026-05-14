@@ -1,0 +1,5 @@
+# Override the repo-root .gitignore which ignores `lib/` (a stale Python
+# convention left over from cookiecutter). The lib/ directory in this
+# distributable skill is part of the shipped artifact and must be tracked.
+!lib/
+!lib/**
