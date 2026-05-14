@@ -1,4 +1,0 @@
-# The repo-root .gitignore excludes `lib/` globally (Python build artefact).
-# The test-harness skill ships a real `lib/` package, so we negate it here.
-!lib/
-!lib/**
