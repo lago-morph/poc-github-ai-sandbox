@@ -96,6 +96,7 @@ pipeline-ai-sandbox/
   test-harness/                # development-only test scaffolding
     SKILL.md
     SPEC.md
+    README.md
     archetypes/                # 8 archetypes
     scenarios/                 # 18 scenarios as YAML
     lib/                       # archetype loader, scenario runner, assertions
@@ -1010,23 +1011,31 @@ tarball both produce this tree when applied/extracted):
   README.md                  (new-repo-specific README written by install.md)
 ```
 
-The recipe Markdown also includes `install.md` as its first section so
-the agent reading it executes installation top-to-bottom.
+The recipe Markdown is the **audit form** of the bundle: it includes
+`install.md` verbatim, then an Appendix A that lists every bundled file
+under a `### <path>` header with its verbatim contents in a fenced
+block. The recipe exists so the bundle can be diffed in PR review
+without unpacking a tarball; **it is not the install path**. The
+install path is `install.py` (self-extracting Python, recommended) or
+`pipeline-skills-package.tar.gz` (the equivalent tarball).
 
 ## Build process
 
 A small script at `pipeline-skills-package/bootstrap/build.py` generates
-both forms from one source:
+all four artefacts from one source:
 
 1. Walks `pipeline-skills-package/`.
 2. Excludes files listed in `bootstrap/distribution-exclude.txt`.
-3. Generates `bootstrap/dist/install.md` (the recipe).
-4. Generates `bootstrap/dist/pipeline-skills-package.tar.gz` (the tarball).
-5. Generates `bootstrap/dist/MANIFEST.txt` listing all included files
+3. Builds the gzip tarball bytes in-memory (deterministic mtime=0).
+4. Writes `bootstrap/dist/pipeline-skills-package.tar.gz` (tarball form).
+5. Writes `bootstrap/dist/install.py` (self-extracting installer with
+   the tarball embedded as base64 and verified by sha256 at run time).
+6. Writes `bootstrap/dist/install.md` (audit-form recipe).
+7. Writes `bootstrap/dist/MANIFEST.txt` listing all included files
    with sha256 sums.
 
-The script is the single source of truth. Manual edits to the recipe
-or tarball are forbidden (the build script re-generates them).
+The script is the single source of truth. Manual edits to any dist
+artefact are forbidden (the build script re-generates them).
 
 ## Contract tests in this POC
 
@@ -1455,6 +1464,7 @@ pipeline-ai-sandbox/
   test-harness/                # development-only test scaffolding
     SKILL.md
     SPEC.md
+    README.md
     archetypes/                # 8 archetypes
     scenarios/                 # 18 scenarios as YAML
     lib/                       # archetype loader, scenario runner, assertions
@@ -20500,7 +20510,7 @@ Last-synced-from-POC: 2026-05-14
 
 ````
 
-### docs/test-harness/SPEC.md
+### test-harness/SPEC.md
 
 ````text
 # SPEC — test-harness (development-only)
@@ -21872,6 +21882,12 @@ __all__ = [
     "state_path",
     "write_state_block_console",
 ]
+
+```
+
+### test-harness/runs/.gitkeep
+
+```text
 
 ```
 

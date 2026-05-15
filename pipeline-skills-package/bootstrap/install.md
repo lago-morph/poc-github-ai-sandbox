@@ -80,6 +80,7 @@ pipeline-ai-sandbox/
   test-harness/                # development-only test scaffolding
     SKILL.md
     SPEC.md
+    README.md
     archetypes/                # 8 archetypes
     scenarios/                 # 18 scenarios as YAML
     lib/                       # archetype loader, scenario runner, assertions

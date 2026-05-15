@@ -6,7 +6,7 @@
 # Glob patterns (* and **) match path-by-path.
 
 # Build state and outputs
-runs/
+runs/**
 bootstrap/dist/
 bootstrap/build.py
 bootstrap/distribution-exclude.txt
