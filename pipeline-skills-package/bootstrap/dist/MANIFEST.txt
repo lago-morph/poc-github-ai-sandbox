@@ -3,9 +3,9 @@
 
 95d2d56f34381b472e40846e466a970fd4c2a904bbd1e651d61bd823bd433551       15267  NEW-REPO-PLAN.md
 24e4e0773639468da023918b5558dadeba8510fe8ba3f724db3dcce0fa34db66        8852  docs/OVERVIEW.md
-23dd5a73a8154a67da456461269309b297732aa7801a458e8afbfcc8d013d592        8706  docs/SPEC-PACKAGE.md
+e34cf8150340b7ebc0ff2a4a92dee67543410dd58aa9e2c6541fb05c20ad7435        9257  docs/SPEC-PACKAGE.md
 dfa8d7a59d58d359eb137a3e54ef71903d9ccc2ed07763c88235248e3b305d7c       10925  TESTING-IN-POC.md
-10f1b096ad46ae463fbb1c0d83bd6faff66a6a1bd4fc6d721b092df2d75cf35b        7952  bootstrap/install.md
+271257aa265e3e36ddb9e60e7019f514dce2e726ea2eea1d93d019327f639c35        7966  bootstrap/install.md
 61ab8ab6927770b7ce6e2160441bf5e5fb3eae0dba04df6d9a22fa1bf18829e9         165  .claude/skills/batch-job/README.md
 81ad5a7f4df5f02e74199cd339a350eca8783edae587ee4696abddd32ffa6671       10891  .claude/skills/batch-job/SKILL.md
 82fd35842f29eaf1c50501e4e34caea60e622084cccdd824d06d7fee18ae55b6        9546  docs/skills/batch-job/SPEC.md
@@ -136,7 +136,7 @@ eb29fb3bb0026359d8b12011896ef515845509bf09be9e2f609015c6d44301ea        2353  .c
 0aa1ac68feaae8c0e51259c97a0e88b231cbfaf9f1fed34fd9c87afa19898930         658  .claude/skills/task-dag/templates/github/workflows/lock-and-sweep.yml
 fc121c50c60320b0bcc2c92f05e318779fae1e8ef6ec06d01da50498940d81e8         675  test-harness/README.md
 da8a7fd399b94d01d6b094f6a31e5a515e07a91ddc9d4e291ff4e918e01781d7       10141  test-harness/SKILL.md
-326542104d95e6c4f59fe7becb2e1533b8906a65c0fc27e3bf50770ff71d3686       12228  docs/test-harness/SPEC.md
+326542104d95e6c4f59fe7becb2e1533b8906a65c0fc27e3bf50770ff71d3686       12228  test-harness/SPEC.md
 6da2ed74734d554a6acbb0e9f9e35c25db0f00025218727fcd78ecaf336d0082         267  test-harness/archetypes/blank-repo/README.md
 a8643b4c0d1292d235824935e6ad1d80013a13b7e8910c5da929c4127e965218         395  test-harness/archetypes/blank-repo/manifest.json
 33dea8e02b2988bf1a8fb23ce8db57b01b1f2e331e29847e98bc0dd47c3389ca          38  test-harness/archetypes/existing-skills-conflict/.claude/skills/batch-job/SKILL.md
@@ -175,6 +175,7 @@ e93bd997f4a23bb60b53ac421005effb66c253f8029bd95bdeee2ba953399903        3582  te
 4eef8a78291e660495d5d043aabe4240b02751521f65f7a82086fb3070c0e346        5007  test-harness/lib/assertions.py
 b47702a922ccf1ede30bb0331f089f8ac6e13420e920da8781b19dd7b5ce9bb4        5066  test-harness/lib/scenario_runner.py
 e4a0b4ab9abcf697f1ca1911081939842a9d72b13210b4270e408435e011cf58        4518  test-harness/lib/state.py
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855           0  test-harness/runs/.gitkeep
 3f208993fc953667be5e374262f3dc643949baada1ece3bf37809e45c38bb245         585  test-harness/scenarios/batch-job-branch-sha-mismatch.yml
 46f1508741fda4dc93a13754d06a3603f6ced3b8f8df26485a191a46dd2913ad         616  test-harness/scenarios/batch-job-happy-path.yml
 b983912cf854f6d54278eacac59df50a1d7b9856c017038d3802f5f188283dd1         473  test-harness/scenarios/batch-job-parse-error.yml

@@ -107,8 +107,6 @@ def map_to_bundle_path(rel: str) -> Optional[str]:
 
     if head == "test-harness" and len(parts) >= 2:
         rest = "/".join(parts[1:])
-        if rest == "SPEC.md":
-            return "docs/test-harness/SPEC.md"
         return f"test-harness/{rest}"
 
     return None
@@ -194,7 +192,7 @@ def build_recipe(entries, install_md_text: str) -> str:
     return "\n".join(lines)
 
 
-def build_tarball_bytes(entries) -> bytes:
+def build_tarball_bytes(entries, extra: dict | None = None) -> bytes:
     """Build the bundle tarball in-memory and return its gzipped bytes.
 
     Writing the same byte stream to disk AND embedding it inside
@@ -216,14 +214,19 @@ def build_tarball_bytes(entries) -> bytes:
                 info.mtime = 0
                 with src.open("rb") as fh:
                     tar.addfile(info, fh)
+            for name, data in (extra or {}).items():
+                info = tarfile.TarInfo(name=name)
+                info.size = len(data)
+                info.mtime = 0
+                tar.addfile(info, io.BytesIO(data))
     finally:
         gz.close()
     return raw.getvalue()
 
 
-def build_tarball(entries, dest: Path) -> bytes:
+def build_tarball(entries, dest: Path, extra: dict | None = None) -> bytes:
     """Build the tarball, write it to dest, and return its bytes."""
-    data = build_tarball_bytes(entries)
+    data = build_tarball_bytes(entries, extra=extra)
     dest.write_bytes(data)
     return data
 
@@ -449,10 +452,19 @@ def main(argv=None) -> int:
     recipe = build_recipe(entries, install_md_text)
     (output / "install.md").write_text(recipe, encoding="utf-8")
 
-    tarball_bytes = build_tarball(entries, output / "pipeline-skills-package.tar.gz")
+    manifest_bytes = manifest.encode("utf-8")
+    extra: dict[str, bytes] = {"MANIFEST.txt": manifest_bytes}
+    for src, _rel, bundle, _digest, _size in entries:
+        if bundle == "test-harness/SPEC.md":
+            extra["docs/test-harness/SPEC.md"] = src.read_bytes()
+            break
+    tarball_bytes = build_tarball(
+        entries, output / "pipeline-skills-package.tar.gz",
+        extra=extra,
+    )
 
     generated_at = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    sfx = build_self_extracting_py(tarball_bytes, len(entries), generated_at)
+    sfx = build_self_extracting_py(tarball_bytes, len(entries) + len(extra), generated_at)
     (output / "install.py").write_text(sfx, encoding="utf-8")
 
     total_bytes = sum(e[4] for e in entries)
