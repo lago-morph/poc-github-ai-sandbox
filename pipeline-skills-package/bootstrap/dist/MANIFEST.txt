@@ -5,7 +5,7 @@
 24e4e0773639468da023918b5558dadeba8510fe8ba3f724db3dcce0fa34db66        8852  docs/OVERVIEW.md
 23dd5a73a8154a67da456461269309b297732aa7801a458e8afbfcc8d013d592        8706  docs/SPEC-PACKAGE.md
 dfa8d7a59d58d359eb137a3e54ef71903d9ccc2ed07763c88235248e3b305d7c       10925  TESTING-IN-POC.md
-08c871588ea90e70be76f2792ea7fdd9b11e7e1c64923af89d99acb9edb645ea        9428  bootstrap/install.md
+10f1b096ad46ae463fbb1c0d83bd6faff66a6a1bd4fc6d721b092df2d75cf35b        7952  bootstrap/install.md
 61ab8ab6927770b7ce6e2160441bf5e5fb3eae0dba04df6d9a22fa1bf18829e9         165  .claude/skills/batch-job/README.md
 81ad5a7f4df5f02e74199cd339a350eca8783edae587ee4696abddd32ffa6671       10891  .claude/skills/batch-job/SKILL.md
 82fd35842f29eaf1c50501e4e34caea60e622084cccdd824d06d7fee18ae55b6        9546  docs/skills/batch-job/SPEC.md

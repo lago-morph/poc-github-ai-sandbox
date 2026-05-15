@@ -1,14 +1,14 @@
 # install.md — bootstrap contract for the new pipeline-ai-sandbox repo
 
 Status: agent-facing contract.
-Audience: the Claude Code agent that's been told "unpack this archive
-and follow install.md" in a freshly created `pipeline-ai-sandbox` repo.
+Audience: the Claude Code agent that's been told to bootstrap a freshly
+created `pipeline-ai-sandbox` repo from this bundle.
 
 > If you are a human reading this: you don't run this yourself.
-> Copy either `install.md` (recipe form) or
-> `pipeline-skills-package.tar.gz` (tarball form) into your fresh
+> Copy `install.py` (self-extracting installer) into your fresh
 > `pipeline-ai-sandbox` repo, then tell a Claude Code agent:
-> "Read install.md at the repo root and follow it."
+> "Run `python install.py`, then read `bootstrap/install.md` and
+> follow it."
 
 ## What you (the agent) are doing
 
@@ -17,20 +17,11 @@ This repo will become the maintenance project for a set of Claude
 Code skills that implement the agent-job dispatch protocol described
 in `docs/SPEC-PACKAGE.md`.
 
-There are two forms of this bundle. You can be reading **either**:
-
-- **Recipe form**: this `install.md` file is itself the entire
-  bundle. Below in Section 4 you will find every file's content
-  inlined in code blocks. Your job is to create each file at the
-  path its header specifies.
-- **Tarball form**: this `install.md` lives at the top of a tar.gz
-  archive. The archive has already been extracted somewhere — verify
-  the file tree is present, then proceed.
-
-Look at Section 4. If it contains inlined file contents, you're in
-recipe form. If Section 4 is short and points at sibling files, you're
-in tarball form (the archive has been extracted and files are sitting
-on disk already).
+By the time you are reading this file, the bundle has already been
+extracted onto disk — either by `python install.py` (the self-extracting
+installer, recommended) or by `tar -xzf pipeline-skills-package.tar.gz`
+(the equivalent tarball form). Your job from here is to verify the
+extracted tree, then move on to `NEW-REPO-PLAN.md`.
 
 ## Section 1 — pre-flight (always run)
 
@@ -117,69 +108,27 @@ Phase 2.
 
 ## Section 3 — install procedure
 
-### If recipe form (Section 4 has inlined file contents)
+The bundle has already been extracted onto disk by `install.py`
+(or by `tar -xzf` of the equivalent tarball form). `install.py`
+performs sha256 integrity verification on its embedded payload
+before extraction, so the bytes on disk are authentic if it exited 0.
 
-For each block in Section 4:
-
-1. Read the header `### <path>`.
-2. Create any missing parent directories.
-3. Write the file's content from the fenced code block immediately
-   below the header.
-4. After writing every file, run Section 5's verification.
-
-Order does not matter for file writes (no file depends on another's
-existence at write time).
-
-### If tarball form (Section 4 points at sibling files)
-
-The tarball has already been extracted. The file tree should already
-match Section 2 except for files marked as `# written by ...`. Walk
-the tree and verify presence. Run Section 5's verification.
+Walk the tree and verify presence against Section 2's layout, then
+run Section 4's verification.
 
 ### Conflict handling
 
-If any file you're about to write already exists with content
-differing from the bundle:
-
-- **Don't overwrite silently.** Show the user the diff.
-- Ask: "Overwrite, skip, or write to `<path>.new`?"
-- Honor the user's choice.
+`install.py` refuses to overwrite existing files whose content differs
+from the bundle unless `--force` was passed. If you see file conflicts
+reported by `install.py`, stop and surface them to the user before
+proceeding. Identical files are silently skipped (idempotent re-runs).
 
 For `README.md` specifically: it should not yet exist (Section 2 has
 no README in the bundle). If it does, surface to the user.
 
 `.gitignore` is in the same boat — if one exists, surface to user.
 
-## Section 4 — bundled files
-
-> **In recipe form, this section contains every file's content
-> inlined.** It is large. Each file's content lives in a fenced code
-> block immediately under a `### <path>` header. The content between
-> the fences is the verbatim file content.
->
-> **In tarball form, this section contains only a manifest listing.**
-> The actual files have already been extracted.
-
-[At build time, `bootstrap/build.py` generates this section as one of
-two variants. The plan-time scaffolding looks like:]
-
-```
-### .claude/skills/batch-job/SKILL.md
-
-<full SKILL.md content for batch-job>
-
-### .claude/skills/batch-job/templates/agent/config.json
-
-<copy of POC's .agent/config.json>
-
-### .claude/skills/batch-job/templates/agent/scripts/common.py
-
-<copy of POC's .agent/scripts/common.py>
-
-[... continues for every file in the bundle ...]
-```
-
-## Section 5 — verification (always run after install)
+## Section 4 — verification (always run after install)
 
 After all files are written (or verified present in tarball form):
 
@@ -219,9 +168,9 @@ After all files are written (or verified present in tarball form):
    ```
 
 If anything fails verification, surface it and stop. Do not advance
-to Section 6.
+to Section 5.
 
-## Section 6 — next step
+## Section 5 — next step
 
 After successful verification:
 
@@ -256,12 +205,13 @@ After successful verification:
 
 ## Recovery
 
-If install was interrupted mid-recipe:
+If install was interrupted mid-extract:
 
-1. Re-run install.md from the beginning.
-2. Section 3's conflict handling will detect already-written files
-   and skip them (after confirming content matches).
-3. Verification (Section 5) catches any partial writes.
+1. Re-run `python install.py`.
+2. `install.py` is idempotent — files that already match the bundle
+   content are silently skipped; conflicts are surfaced before any
+   write happens.
+3. Verification (Section 4) catches any partial writes.
 
 Idempotency is a design goal — running install twice should be
 safe.
